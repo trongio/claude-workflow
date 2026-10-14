@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "workflow",
+  "displayName": "Manager + tiered subagents workflow",
+  "version": "0.1.0",
+  "description": "A manager session that plans, delegates to tiered subagents, runs quality gates, scales review depth by risk, verifies in a browser and records every task on a markdown board.",
+  "author": { "name": "Giorgi Kakabadze", "url": "https://github.com/trongio" },
+  "homepage": "https://github.com/trongio/claude-workflow",
+  "repository": "https://github.com/trongio/claude-workflow",
+  "license": "MIT",
+  "keywords": ["workflow", "subagents", "code-review", "task-board", "quality-gates", "worktrees"]
+}

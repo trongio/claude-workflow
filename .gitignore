@@ -1,0 +1,4 @@
+.workflow/
+node_modules/
+*.log
+.DS_Store

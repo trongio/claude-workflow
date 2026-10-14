@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "trongio",
+  "description": "Claude Code plugins by trongio.",
+  "owner": { "name": "Giorgi Kakabadze", "url": "https://github.com/trongio" },
+  "plugins": [
+    {
+      "name": "workflow",
+      "source": ".",
+      "description": "Manager session + tiered subagents: plan, delegate, gate, risk-scaled review, verify, record on a markdown task board.",
+      "category": "productivity"
+    }
+  ]
+}
