@@ -48,7 +48,7 @@ fi
 if grep -rqI $'\xe2\x80\x94' --exclude-dir=.git "$repo" 2>/dev/null; then die "em dash found"; else ok "no em dash"; fi
 
 # Scratch repo
-rm -rf "$dir" "$dir-wt"
+rm -rf "$dir" "$dir-wt" "$dir-bin"
 mkdir -p "$dir"
 cd "$dir"
 git init -q -b main
@@ -133,6 +133,18 @@ git worktree add -q -b feat/x "$dir-wt" main
 "$wf" review-diff main...feat/x | grep -q 'src/c.ts' && ok "wf review-diff" || die "review-diff"
 "$wf" merge feat/x | grep -q '^merged feat/x' && ok "wf merge" || die "merge"
 git worktree remove --force "$dir-wt"
+
+# Overnight runner with a stub `claude` that finishes the card.
+stub="$dir-bin"
+mkdir -p "$stub"
+printf '#!/bin/sh\n"%s" move WF-2 done >/dev/null\necho %s\n' "$wf" \
+    "'{\"is_error\":false,\"session_id\":\"stub\",\"total_cost_usd\":0}'" >"$stub/claude"
+chmod +x "$stub/claude"
+[ -f .workflow/queue/WF-2.task ] || die "queue file missing"
+PATH="$stub:$PATH" POLL=1 "$wf" run >"$dir-runner.log" 2>&1
+[ -f .workflow/done/WF-2.task ] && grep -q 'card status: done' .workflow/logs/summary.md && ok "overnight runner drains the queue (stub claude)" || die "runner: $(tail -5 "$dir-runner.log")"
+[ ! -d .workflow/worktrees/WF-2 ] && ok "runner removes merged worktrees" || die "runner worktree cleanup"
+rm -rf "$stub" "$dir-runner.log"
 
 printf '\n%d checks passed (scratch: %s)\n' "$pass" "$dir"
 

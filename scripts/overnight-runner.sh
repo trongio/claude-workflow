@@ -168,7 +168,15 @@ run_card() {
         if [ "$rc" = 0 ] && printf '%s' "$out" | jq -e '.is_error == false' >/dev/null 2>&1; then
             status="$("$wf" show "$id" 2>/dev/null | sed -n 's/^status: *//p' | head -1)"
             summary "$id" "finished (card status: ${status:-unknown}, cost \$$(printf '%s' "$out" | jq -r '.total_cost_usd // "?"'))"
-            set_result "done"
+            # A session that ended with the card still in progress needs a human look.
+            case "$status" in
+            todo | in-progress | "") set_result failed ;;
+            *) set_result "done" ;;
+            esac
+            # Merged and clean: drop the worktree and its branch.
+            if git merge-base --is-ancestor "$branch" "$base_branch" 2>/dev/null && [ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ]; then
+                git worktree remove "$wt" 2>/dev/null && git branch -d "$branch" >/dev/null 2>&1
+            fi
             return
         fi
         [ "$rc" = 143 ] && {
