@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/trongio/claude-workflow/main/schema/workflow.schema.json",
+  "title": "workflow plugin project config (.claude/workflow.json)",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "$schema": { "type": "string" },
+    "idPrefix": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9]*$", "description": "Card id prefix (APP -> APP-12). Default: initials of the repo name, e.g. my-app -> MA." },
+    "baseBranch": { "type": "string", "description": "Branch that tasks merge into and gates diff against. Default: origin's HEAD, else main." },
+    "wipLimit": { "type": "integer", "minimum": 1, "default": 2, "description": "Maximum cards in in-progress, code-review and ux-review at once (wf claim). Env WF_WIP overrides." },
+    "timezone": { "type": "string", "description": "IANA zone for card dates (created, started, done). Default: the system zone." },
+    "push": { "type": "boolean", "default": true, "description": "Whether the task skill pushes the base branch after a merge." },
+    "milestone": {
+      "type": "object",
+      "properties": { "label": { "type": "string", "default": "milestone", "description": "Name of the goal that cards with milestone: true count toward (board progress bar, ETA, wf stats)." } }
+    },
+    "board": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "Board page title. Default: '<repo> board'." },
+        "host": { "type": "string", "default": "127.0.0.1" },
+        "port": { "type": "integer", "default": 8090 }
+      }
+    },
+    "gates": {
+      "type": "array",
+      "description": "Quality gates for wf gates. All selected gates run in parallel.",
+      "items": {
+        "type": "object",
+        "required": ["name", "cmd"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+$" },
+          "cmd": { "type": "string", "description": "Shell command, run with bash -c from the worktree root. Env: WF_BASE (diff base), WF_CHANGED (file listing changed paths)." },
+          "when": { "type": "array", "items": { "type": "string" }, "description": "Globs matched against changed files; the gate is skipped when none match. '*' crosses directories, '?' is one character, a trailing '/' means everything under it. Omit to always run." },
+          "fix": { "type": "string", "description": "Command that fixes what the gate checks (formatters); run by wf gates --fix before the gates." },
+          "cache": { "type": "boolean", "default": true, "description": "Skip when the content of the 'when' paths (whole tree without 'when') and the command match the last PASS." }
+        }
+      }
+    },
+    "gatesCache": { "type": "boolean", "default": true, "description": "Global switch for the gate cache (stored in <git common dir>/workflow-gates-cache)." },
+    "gatesTailLines": { "type": "integer", "default": 30, "description": "Lines of output shown per failing gate." },
+    "worktree": {
+      "type": "object",
+      "description": "How wf wt-init makes a fresh git worktree runnable.",
+      "properties": {
+        "link": { "type": "array", "items": { "type": "string" }, "description": "Dirs hardlink-copied from the main checkout (symlink fallback), e.g. node_modules, vendor." },
+        "copy": { "type": "array", "items": { "type": "string" }, "description": "Files copied once when missing, e.g. .env." },
+        "setup": { "type": "array", "items": { "type": "string" }, "description": "Commands run in the worktree after linking, in order." }
+      }
+    },
+    "ui": { "type": "boolean", "description": "Whether the project has a UI. false makes the verifier use the nearest non-UI surface and the ux-critic skip." },
+    "dev": {
+      "type": "object",
+      "description": "The LOCAL dev app the verifier and ux-critic drive.",
+      "properties": {
+        "url": { "type": "string", "description": "Base URL of the running dev app." },
+        "login": { "type": "string", "description": "How to sign in locally: seeded accounts and WHERE the dev credentials live (never the secret itself), or how to register a throwaway account." },
+        "viewports": { "type": "array", "items": { "type": "integer" }, "default": [1440, 390], "description": "Widths to verify and screenshot." },
+        "check": { "type": "string", "description": "Optional project command for cheap one-shot page checks, preferred over browser MCP steps." },
+        "screenshots": { "type": "string", "default": ".workflow/shots", "description": "Where screenshots are written." }
+      }
+    },
+    "docs": {
+      "type": "object",
+      "description": "Docs agents treat as ground truth.",
+      "properties": {
+        "design": { "type": "array", "items": { "type": "string" }, "description": "Design specs and briefs for the ux-critic." },
+        "spec": { "type": "array", "items": { "type": "string" }, "description": "Product or build specs for the planner." }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "properties": {
+        "high": { "type": "array", "items": { "type": "string" }, "description": "Paths that make a diff high risk (two reviews, owner review)." }
+      }
+    },
+    "overnight": {
+      "type": "object",
+      "description": "Unattended runner (wf night / wf run). Env vars of the same name in upper case override.",
+      "properties": {
+        "parallel": { "type": "integer", "minimum": 1, "default": 2 },
+        "maxHours": { "type": "number", "default": 24 },
+        "timeoutMinutes": { "type": "integer", "default": 120, "description": "Per attempt." },
+        "retries": { "type": "integer", "default": 2, "description": "Attempts per card; usage-limit waits and overload backoffs do not count." },
+        "model": { "type": "string", "default": "opus", "description": "Model for the headless manager sessions; a queue file's '# model:' line overrides." },
+        "permissionFlags": { "type": "string", "default": "--dangerously-skip-permissions", "description": "Permission flags passed to claude -p." }
+      }
+    }
+  }
+}
