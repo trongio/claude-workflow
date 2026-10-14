@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task Board</title>
+<style>
+:root {
+    --bg: #f4f3ef; --panel: #ffffff; --ink: #1b1d1f; --muted: #6b6f75; --line: #e3e1da;
+    --accent: #1f6feb; --ok: #1a7f4b; --warn: #b45309; --bad: #c2362b; --chip: #efede6;
+    --col: #ebe9e2; --shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg: #111315; --panel: #1a1d20; --ink: #e8e6e1; --muted: #9399a1; --line: #2b2f34;
+        --accent: #5b9dff; --ok: #3fb97a; --warn: #e5a03b; --bad: #ef6a5e; --chip: #24282c;
+        --col: #16191b; --shadow: none;
+    }
+}
+:root[data-theme="dark"] {
+    --bg: #111315; --panel: #1a1d20; --ink: #e8e6e1; --muted: #9399a1; --line: #2b2f34;
+    --accent: #5b9dff; --ok: #3fb97a; --warn: #e5a03b; --bad: #ef6a5e; --chip: #24282c;
+    --col: #16191b; --shadow: none;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 ui-sans-serif, system-ui, "Segoe UI", sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+.live { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+.live.on i { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.spacer { flex: 1; }
+button, select { font: inherit; color: inherit; background: var(--chip); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+main { padding: 16px 20px 40px; display: grid; gap: 16px; }
+.stats { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.4fr); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); min-width: 0; }
+.label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+.big { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.1; margin: 4px 0; }
+.sub { color: var(--muted); font-size: 12.5px; }
+.bar { height: 10px; background: var(--chip); border-radius: 99px; overflow: hidden; display: flex; margin: 10px 0 6px; }
+.bar span { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
+.legend b { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+svg.spark { width: 100%; height: 56px; display: block; margin-top: 6px; }
+.grid2 { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 16px; align-items: start; }
+.board { display: grid; grid-template-columns: repeat(6, minmax(170px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.col { background: var(--col); border-radius: 10px; padding: 8px; min-height: 120px; max-height: 72vh; overflow-y: auto; }
+.col h2 { position: sticky; top: -8px; background: var(--col); padding: 6px 0; z-index: 1; font-size: 12px; margin: 2px 4px 8px; display: flex; justify-content: space-between; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.col.you h2 { color: var(--warn); }
+.task { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 6px; cursor: pointer; box-shadow: var(--shadow); }
+.task:hover, .task:focus-visible { border-color: var(--accent); outline: none; }
+.task .t { font-weight: 550; font-size: 13px; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; font-size: 11px; color: var(--muted); align-items: center; }
+.pill { background: var(--chip); border-radius: 4px; padding: 0 5px; }
+.pill.ms { color: var(--accent); }
+.pill.blocked { color: var(--bad); }
+.acc { height: 3px; background: var(--chip); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.acc span { display: block; height: 100%; background: var(--ok); }
+.side { display: grid; gap: 12px; }
+.list { list-style: none; margin: 8px 0 0; padding: 0; }
+.list li { padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; cursor: pointer; }
+.list li:first-child { border-top: 0; }
+.list .when { color: var(--muted); font-size: 11.5px; }
+.commits li { cursor: default; }
+code { font: 12px ui-monospace, monospace; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.backlog { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; margin-top: 10px; }
+dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--ink); width: min(720px, calc(100vw - 32px)); max-height: 85vh; padding: 0; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+.dlg-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 10px; align-items: start; }
+.dlg-body { padding: 4px 18px 18px; overflow: auto; }
+.dlg-body h2 { font-size: 14px; margin: 16px 0 6px; }
+.dlg-body ul { padding-left: 20px; margin: 4px 0; }
+.dlg-body li.chk { list-style: none; margin-left: -20px; }
+.empty { color: var(--muted); font-size: 12px; padding: 6px 4px; }
+@media (max-width: 1100px) { .stats { grid-template-columns: minmax(0,1fr) minmax(0,1fr); } .grid2 { grid-template-columns: minmax(0,1fr); } }
+@media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } header { flex-wrap: wrap; } .stats { grid-template-columns: minmax(0,1fr); } .board { grid-template-columns: repeat(6, 78vw); } }
+</style>
+</head>
+<body>
+<header>
+    <h1 id="title">Task board</h1>
+    <span class="live" id="live"><i></i><span>connecting</span></span>
+    <span class="spacer"></span>
+    <button id="msOnly" aria-pressed="true">Milestone only</button>
+    <select id="area" aria-label="Area"><option value="">All areas</option></select>
+    <button id="theme" aria-label="Toggle theme">Theme</button>
+</header>
+<main>
+    <section class="stats">
+        <div class="card">
+            <div class="label" id="msLabel">Milestone</div>
+            <div class="big" id="pct">-</div>
+            <div class="bar" id="bar"></div>
+            <div class="legend" id="legend"></div>
+        </div>
+        <div class="card">
+            <div class="label">Estimated finish</div>
+            <div class="big" id="eta">-</div>
+            <div class="sub" id="etaSub"></div>
+        </div>
+        <div class="card">
+            <div class="label">Waiting on you</div>
+            <div class="big" id="youCount">-</div>
+            <div class="sub" id="youSub"></div>
+        </div>
+        <div class="card">
+            <div class="label">Points shipped per day, last 30 days</div>
+            <svg class="spark" id="spark" role="img" aria-label="Daily shipped points"></svg>
+            <div class="sub" id="velSub"></div>
+        </div>
+    </section>
+    <section class="grid2">
+        <div>
+            <div class="board" id="board"></div>
+            <details class="card" style="margin-top:12px" id="backlogWrap">
+                <summary id="backlogSum">Backlog</summary>
+                <div class="backlog" id="backlog"></div>
+            </details>
+        </div>
+        <aside class="side">
+            <div class="card">
+                <div class="label">Needs you</div>
+                <ul class="list" id="you"></ul>
+            </div>
+            <div class="card">
+                <div class="label">Recently done</div>
+                <ul class="list" id="done"></ul>
+            </div>
+            <div class="card">
+                <div class="label">Commits <span id="branch"></span></div>
+                <ul class="list commits" id="commits"></ul>
+            </div>
+        </aside>
+    </section>
+</main>
+<dialog id="dlg"><div class="dlg-head"><div style="flex:1" id="dlgHead"></div><button id="dlgClose">Close</button></div><div class="dlg-body" id="dlgBody"></div></dialog>
+<script>
+const COLUMNS = [
+    ['todo', 'To do'], ['in-progress', 'In progress'], ['code-review', 'Code review'],
+    ['ux-review', 'UX review'], ['owner-review', 'Owner review'], ['done', 'Done'],
+];
+const COLORS = { done: 'var(--ok)', 'owner-review': 'var(--warn)', 'ux-review': '#8b5cf6', 'code-review': '#0ea5e9', 'in-progress': 'var(--accent)', todo: 'var(--muted)' };
+const DAY = 864e5;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const day = (d) => (d ? new Date(`${d}T12:00:00`) : null);
+const fmtDate = (d) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+const ago = (t) => { const m = Math.round((Date.now() - t) / 6e4); return m < 60 ? `${m}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`; };
+let data = null;
+const prefs = (() => { try { return JSON.parse(localStorage.getItem('board') || '{}'); } catch { return {}; } })();
+const save = () => { try { localStorage.setItem('board', JSON.stringify(prefs)); } catch {} };
+
+function inMilestone(t) { return t.milestone; }
+function needsYou(t) { return t.status !== 'done' && (t.status === 'owner-review' || /^owner/i.test(t.blocked || '')); }
+
+function velocity(tasks, days) {
+    const since = Date.now() - days * DAY;
+    return tasks.filter((t) => t.status === 'done' && day(t.done) >= since).reduce((s, t) => s + t.points, 0) / days;
+}
+
+function render() {
+    if (!data) return;
+    const { tasks, commits, branch } = data;
+    document.title = data.title; $('title').textContent = data.title;
+    const label = data.milestoneLabel || 'milestone';
+    $('msLabel').textContent = label; $('msOnly').textContent = `${label} only`;
+    const areaSel = $('area');
+    const areas = [...new Set(tasks.map((t) => t.area).filter(Boolean))].sort();
+    if (areaSel.options.length - 1 !== areas.length) {
+        areaSel.innerHTML = '<option value="">All areas</option>' + areas.map((a) => `<option>${esc(a)}</option>`).join('');
+        areaSel.value = prefs.area || '';
+    }
+    const visible = tasks.filter((t) => (!prefs.area || t.area === prefs.area) && (prefs.msOnly === false || t.milestone));
+
+    // Milestone progress.
+    const ms = tasks.filter(inMilestone);
+    const total = ms.reduce((s, t) => s + t.points, 0);
+    const byStatus = {};
+    ms.forEach((t) => { byStatus[t.status] = (byStatus[t.status] || 0) + t.points; });
+    const donePts = byStatus.done || 0;
+    $('pct').textContent = total ? `${Math.round((donePts / total) * 100)}%` : 'no tasks yet';
+    $('bar').innerHTML = COLUMNS.slice().reverse().map(([k]) => byStatus[k] ? `<span style="width:${(byStatus[k] / total) * 100}%;background:${COLORS[k]}" title="${k}: ${byStatus[k]} pts"></span>` : '').join('');
+    $('legend').innerHTML = `<span>${donePts} of ${total} pts done</span>` + COLUMNS.filter(([k]) => byStatus[k] && k !== 'done').map(([k, l]) => `<span><b style="background:${COLORS[k]}"></b>${l} ${byStatus[k]}</span>`).join('');
+
+    // ETA: remaining unblocked milestone points over recent velocity, with a range.
+    const remaining = ms.filter((t) => t.status !== 'done');
+    const blockedPts = remaining.filter((t) => t.blocked).reduce((s, t) => s + t.points, 0);
+    const workPts = remaining.reduce((s, t) => s + t.points, 0) - blockedPts;
+    const v14 = velocity(tasks, 14), v7 = velocity(tasks, 7), v28 = velocity(tasks, 28);
+    if (!remaining.length && total) { $('eta').textContent = 'Ready'; $('etaSub').textContent = 'every milestone card is done'; }
+    else if (v14 > 0) {
+        const at = (v) => new Date(Date.now() + (workPts / v) * DAY);
+        const fast = Math.max(v7, v14, v28), slow = Math.min(v7, v14, v28) || v14;
+        $('eta').textContent = fmtDate(at(v14));
+        $('etaSub').innerHTML = `${workPts} pts of agent work at ${v14.toFixed(1)} pts/day (range ${fmtDate(at(fast))} to ${fmtDate(at(slow))}).` +
+            (blockedPts ? `<br><span style="color:var(--bad)">+ ${blockedPts} pts blocked on people, not in this date.</span>` : '');
+    } else { $('eta').textContent = '?'; $('etaSub').textContent = 'no tasks done in the last 14 days'; }
+
+    // Waiting on you.
+    const you = tasks.filter(needsYou);
+    $('youCount').textContent = you.length;
+    $('youSub').textContent = you.length ? `${you.filter((t) => t.status === 'owner-review').length} to review, ${you.filter((t) => t.status !== 'owner-review').length} blocked on your input` : 'nothing, the agents are unblocked';
+    $('you').innerHTML = you.slice(0, 12).map((t) => `<li data-id="${esc(t.id)}"><span class="when">${esc(t.id)}</span> ${esc(t.title)}<div class="when" style="color:var(--bad)">${esc(t.blocked || 'review and decide')}</div></li>`).join('') || '<li class="empty">Nothing waiting.</li>';
+
+    // Velocity sparkline.
+    const days = [...Array(30)].map((_, i) => { const d = new Date(Date.now() - (29 - i) * DAY); return d.toISOString().slice(0, 10); });
+    const perDay = days.map((d) => tasks.filter((t) => t.status === 'done' && t.done === d).reduce((s, t) => s + t.points, 0));
+    const max = Math.max(1, ...perDay);
+    $('spark').setAttribute('viewBox', '0 0 300 56');
+    $('spark').setAttribute('preserveAspectRatio', 'none');
+    $('spark').innerHTML = perDay.map((p, i) => `<rect x="${i * 10 + 1}" y="${56 - (p / max) * 52}" width="8" height="${Math.max((p / max) * 52, p ? 2 : 1)}" rx="1.5" fill="${p ? 'var(--accent)' : 'var(--line)'}"><title>${days[i]}: ${p} pts</title></rect>`).join('');
+    $('velSub').textContent = `7d ${v7.toFixed(1)} · 14d ${v14.toFixed(1)} · 28d ${v28.toFixed(1)} pts/day`;
+
+    // Board.
+    const card = (t) => `<div class="task" tabindex="0" data-id="${esc(t.id)}">
+        <div class="t">${esc(t.title)}</div>
+        <div class="meta"><span>${esc(t.id)}</span><span class="pill">${esc(t.size)}</span>${t.area ? `<span class="pill">${esc(t.area)}</span>` : ''}${t.milestone ? '<span class="pill ms">${esc(label)}</span>' : ''}${t.blocked ? `<span class="pill blocked" title="${esc(t.blocked)}">blocked</span>` : ''}</div>
+        ${t.acceptance?.total ? `<div class="acc" title="${t.acceptance.done}/${t.acceptance.total} acceptance"><span style="width:${(t.acceptance.done / t.acceptance.total) * 100}%"></span></div>` : ''}
+    </div>`;
+    const order = (a, b) => (!!a.blocked - !!b.blocked) || a.id.localeCompare(b.id, undefined, { numeric: true });
+    $('board').innerHTML = COLUMNS.map(([k, label]) => {
+        let list = visible.filter((t) => t.status === k).sort(order);
+        if (k === 'done') list = list.sort((a, b) => (b.done || '').localeCompare(a.done || '')).slice(0, 15);
+        return `<div class="col ${k === 'owner-review' ? 'you' : ''}"><h2><span>${label}</span><span>${list.length}</span></h2>${list.map(card).join('') || '<div class="empty">empty</div>'}</div>`;
+    }).join('');
+    const backlog = tasks.filter((t) => t.status === 'backlog' && (!prefs.area || t.area === prefs.area));
+    $('backlogSum').textContent = `Backlog (${backlog.length})`;
+    $('backlog').innerHTML = backlog.sort(order).map(card).join('');
+
+    // Recently done, and commits.
+    $('done').innerHTML = tasks.filter((t) => t.status === 'done').sort((a, b) => (b.done || '').localeCompare(a.done || '') || b.id.localeCompare(a.id, undefined, { numeric: true })).slice(0, 8)
+        .map((t) => `<li data-id="${esc(t.id)}">${esc(t.title)}<div class="when">${esc(t.done)} · ${esc(t.id)}</div></li>`).join('');
+    $('branch').textContent = branch ? `· on ${branch}` : '';
+    $('commits').innerHTML = commits.slice(0, 10).map((c) => `<li><code>${esc(c.hash)}</code> ${esc(c.subject)}<div class="when">${ago(c.time)}</div></li>`).join('');
+}
+
+function md(src) {
+    const out = [];
+    let inList = false;
+    const inline = (s) => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+    for (const line of src.split('\n')) {
+        const h = line.match(/^#{1,4}\s+(.*)/), chk = line.match(/^\s*- \[([ xX])\]\s+(.*)/), li = line.match(/^\s*[-*]\s+(.*)/);
+        if ((chk || li) && !inList) { out.push('<ul>'); inList = true; }
+        if (!(chk || li) && inList) { out.push('</ul>'); inList = false; }
+        if (h) out.push(`<h2>${inline(h[1])}</h2>`);
+        else if (chk) out.push(`<li class="chk">${chk[1] === ' ' ? '☐' : '☑'} ${inline(chk[2])}</li>`);
+        else if (li) out.push(`<li>${inline(li[1])}</li>`);
+        else if (line.trim()) out.push(`<p>${inline(line)}</p>`);
+    }
+    if (inList) out.push('</ul>');
+    return out.join('');
+}
+
+function open(id) {
+    const t = data.tasks.find((x) => x.id === id);
+    if (!t) return;
+    const deps = t.depends.map((d) => { const x = data.tasks.find((y) => y.id === d); return `${esc(d)}${x ? ` (${esc(x.status)})` : ''}`; }).join(', ');
+    $('dlgHead').innerHTML = `<div class="label">${esc(t.id)} · ${esc(t.status)}</div><div style="font-size:16px;font-weight:600">${esc(t.title)}</div>
+        <div class="meta"><span class="pill">${esc(t.size)} · ${t.points} pts</span>${t.area ? `<span class="pill">${esc(t.area)}</span>` : ''}${t.branch ? `<span class="pill">${esc(t.branch)}</span>` : ''}${deps ? `<span>depends: ${deps}</span>` : ''}</div>
+        ${t.blocked ? `<div style="color:var(--bad);margin-top:6px">Blocked: ${esc(t.blocked)}</div>` : ''}
+        <div class="sub" style="margin-top:4px"><code>${esc(t.file)}</code></div>`;
+    $('dlgBody').innerHTML = md(t.body || '');
+    $('dlg').showModal();
+}
+
+document.addEventListener('click', (e) => { const el = e.target.closest('[data-id]'); if (el) open(el.dataset.id); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.dataset?.id) open(e.target.dataset.id); });
+$('dlgClose').onclick = () => $('dlg').close();
+$('msOnly').setAttribute('aria-pressed', String(prefs.msOnly !== false));
+$('msOnly').onclick = () => { prefs.msOnly = prefs.msOnly === false; $('msOnly').setAttribute('aria-pressed', String(prefs.msOnly)); save(); render(); };
+$('area').onchange = (e) => { prefs.area = e.target.value; save(); render(); };
+if (prefs.theme) document.documentElement.dataset.theme = prefs.theme;
+$('theme').onclick = () => {
+    const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    prefs.theme = dark ? 'light' : 'dark'; document.documentElement.dataset.theme = prefs.theme; save();
+};
+
+async function load() {
+    try { data = await (await fetch('/api/state')).json(); render(); } catch {}
+}
+function connect() {
+    const es = new EventSource('/events');
+    es.onopen = () => { $('live').className = 'live on'; $('live').lastChild.textContent = 'live'; load(); };
+    es.onmessage = load;
+    es.onerror = () => { $('live').className = 'live'; $('live').lastChild.textContent = 'reconnecting'; };
+}
+load();
+connect();
+</script>
+</body>
+</html>
