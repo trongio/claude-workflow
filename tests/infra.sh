@@ -149,16 +149,17 @@ echo 'dirty' >>src/a.ts
 msg="$("$wf" merge wf/WF-1 2>&1)" && die "merge with a dirty main must fail"
 echo "$msg" | grep -q 'uncommitted changes outside tasks/' && ok "wt-merge: refuses a dirty main checkout" || die "dirty refusal: $msg"
 git checkout -q src/a.ts
-"$wf" move WF-1 "done" >/dev/null
+"$wf" move WF-1 "done" --force >/dev/null
+[ ! -d "$wt" ] && grep -q 'dropped app_wf_1' "$mark" && ok "move done: teardown ran with {slug}, worktree gone" || die "teardown on done"
+[ "$(jq '.worktrees | length' "$ledger")" = 0 ] && ok "move done: ledger empty" || die "ledger left: $(cat "$ledger")"
+git rev-parse -q --verify refs/heads/wf/WF-1 >/dev/null && ok "move done: unmerged branch kept" || die "unmerged branch deleted"
 "$wf" merge wf/WF-1 | grep -q 'committed pending card changes' && ok "wt-merge: commits pending card edits first" || die "merge cards"
 
-# Prune tears down from the ledger.
-"$wf" prune | grep -q "would tear down $wt" && ok "prune: dry run lists the merged worktree" || die "prune dry"
+# Prune: the now-merged branch is a leftover.
+"$wf" prune | grep -q "would delete merged branch wf/WF-1" && ok "prune: dry run lists the merged branch" || die "prune dry"
 "$wf" doctor >/dev/null && die "doctor must fail on leftovers" || ok "doctor: fails on leftovers"
 "$wf" prune --apply >/dev/null
-grep -q 'dropped app_wf_1' "$mark" && ok "prune: teardown command ran with {slug}" || die "teardown marker"
-[ ! -d "$wt" ] && ! git rev-parse -q --verify refs/heads/wf/WF-1 >/dev/null && ok "prune: worktree and branch gone" || die "prune remove"
-[ "$(jq '.worktrees | length' "$ledger")" = 0 ] && ok "prune: ledger empty" || die "ledger left: $(cat "$ledger")"
+! git rev-parse -q --verify refs/heads/wf/WF-1 >/dev/null && ok "prune: merged branch gone" || die "prune remove"
 
 # Doctor: stale lock.
 mkdir -p "$(dirname "$ledger")/workflow-x.lock" && echo 999999 >"$(dirname "$ledger")/workflow-x.lock/pid"

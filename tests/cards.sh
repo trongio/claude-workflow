@@ -25,8 +25,8 @@ die() {
 expect() {
     local label="$1"
     shift
-    "$@" >"$dir/.out" 2>&1 || {
-        cat "$dir/.out" >&2
+    "$@" >"$dir.out" 2>&1 || {
+        cat "$dir.out" >&2
         die "$label"
     }
     ok "$label"
@@ -34,8 +34,8 @@ expect() {
 refuse() {
     local label="$1"
     shift
-    if "$@" >"$dir/.out" 2>&1; then
-        cat "$dir/.out" >&2
+    if "$@" >"$dir.out" 2>&1; then
+        cat "$dir.out" >&2
         die "$label"
     fi
     ok "$label"
@@ -113,7 +113,7 @@ grep -qx 7 .workflow/onmerge.log && ok "tracker.onMerge got WF_ISSUE=7" || die "
 refuse "done from verifying needs --verified" "$wf" move T-1 "done"
 expect "move done --verified" "$wf" move T-1 "done" --verified "scratch test"
 [ -f tasks/archive/T-1-alpha.md ] && [ "$(field T-1 verified)" = 'scratch test' ] && ok "archived with verified" || die "archive"
-[ ! -d "$wt" ] && ! git show-ref --quiet refs/heads/wf/T-1 && ok "move done tore down worktree + branch" || die "teardown on done"
+[ ! -d "$wt" ] && git show-ref --quiet refs/heads/wf/T-1 && ok "move done tore down the worktree, kept the unmerged branch (mode none)" || die "teardown on done"
 
 # merge mode
 expect "start T-2" "$wf" start T-2
@@ -121,7 +121,7 @@ commit_in "$dir/.workflow/worktrees/T-2" beta.txt
 expect "outcome T-2" "$wf" outcome T-2 --tick 1
 write_prose T-2
 expect "finish T-2 (mode merge)" "$wf" finish T-2 --mode merge
-grep -q '^cleaned: .*worktree' "$dir/.out" && ok "finish prints cleaned line" || die "cleaned line"
+grep -q '^cleaned: .*worktree' "$dir.out" && ok "finish prints cleaned line" || die "cleaned line"
 [ -f beta.txt ] && [ "$(git branch --show-current)" = main ] && ok "merged into main, HEAD still main" || die "merge"
 [ ! -d "$dir/.workflow/worktrees/T-2" ] && ! git show-ref --quiet refs/heads/wf/T-2 && ok "finish cleaned worktree + branch" || die "finish cleanup"
 refuse "move done needs ticks" "$wf" move T-3 "done"
