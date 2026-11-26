@@ -14,8 +14,19 @@ any card, and the deterministic parts of the loop moved into scripts.
   second `wf finish ID` after the merge moves it to `verifying` and deletes
   the branch. Teardown aborts rather than lose uncommitted work.
 - High-risk cards without owner approval park in `owner-review` in every
-  finish mode (`review.ownerHoldHigh`). `wf risk` has built-in high patterns
-  when `risk.high` is unset; `wf risk --explain`.
+  finish mode (`review.ownerHoldHigh`). `wf approve ID` records approval for
+  the exact branch tip (a later commit re-holds; refused in headless runs).
+  `wf risk` has built-in high patterns when `risk.high` is unset (renames
+  count both paths); `wf risk --explain`.
+- `wf finish` refuses red or stale release gates (they must be green, on a
+  clean tree, at the exact tip it lands) and a dirty worktree, merges exactly
+  the gated commit (squash by default), aborts a conflicted merge so the main
+  checkout is never left mid-merge, and exits 0/2/3/4/5 (landed, refused,
+  conflict, held for the owner, nothing to land).
+- Safety: cleanup only ever touches `.workflow/worktrees/<ID>`, never the main
+  checkout or your own worktrees; branches are deleted only when merged at
+  the exact tip; processes are killed only inside the card's worktree, never
+  Claude sessions or MCP servers; `--help` never runs a command.
 - New status `verifying` between landing and `done`; `wf move ID done
   --verified "how"` closes a card. Merged is not done.
 - `wf outcome` writes the record skeleton (gate table, diffstat, commits,
