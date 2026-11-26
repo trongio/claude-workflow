@@ -89,8 +89,10 @@ absence once cost a shipped defect or a lost afternoon. A few of them:
  mocks         UX-heavy only: 2-3 HTML mocks, the owner's pick is the spec
  delegate      implementers in parallel, each in a worktree, brief from wf brief
  integrate     merge streams -> wf gates (fast: affected tests only)
- review        IN PARALLEL: reviewer(s) + verifier (wf shots, wf check) + ux-critic
- fix           one merged fix round by a fresh implementer; only the fix diff is re-reviewed
+ review        card -> code-review; IN PARALLEL: reviewer(s) + verifier (wf shots,
+               wf check) + ux-critic
+ fix           one merged fix round by a fresh implementer; only the fix diff is
+               re-reviewed; card -> ux-review when only design fixes remain
  release       wf gates --release: every gate, uncached; a subset is not green
  outcome       wf outcome writes the record; the manager fills the prose
  owner hold    high risk without owner approval parks in owner-review, in every mode
@@ -117,7 +119,7 @@ minors become cards instead of another round.
 
 ## The planning phase
 
-![Planning: detect, three researchers and the ux-critic in parallel, the planner scores and tunes, the owner decides, scaffold and first cards](docs/images/planning.svg)
+![Planning: detect, 2-3 researchers and the ux-critic in parallel, the planner scores and tunes, the owner decides, scaffold and first cards](docs/images/planning.svg)
 
 Before the first card, `/workflow:plan-project` (details in
 [`skills/plan-project/SKILL.md`](skills/plan-project/SKILL.md)) runs a short
