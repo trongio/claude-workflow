@@ -5,7 +5,9 @@
 #
 # Commits only tasks/, in the main checkout (found from any worktree), under the
 # same lock wf merge takes. Refuses unless the main checkout is on the base
-# branch (or on B with --branch B); never switches it. Prints one line.
+# branch (or on B with --branch B); never switches it. Prints one line. When
+# the commit fails (a hook), the card edits are unstaged again and the output
+# tail is printed; exit 1.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -69,6 +71,12 @@ git -C "$main" add -A tasks
 if git -C "$main" diff --cached --quiet -- tasks; then
     echo "no card changes to commit"
 else
-    git -C "$main" commit -q -m "$msg" -- tasks
+    if ! out="$(git -C "$main" commit -q -m "$msg" -- tasks 2>&1)"; then
+        # A failing hook must not leave the card edits staged for the next commit.
+        git -C "$main" reset -q -- tasks 2>/dev/null || true
+        echo "cards-commit: the commit failed (card edits left unstaged):" >&2
+        printf '%s\n' "$out" | tail -n 10 >&2
+        exit 1
+    fi
     echo "committed cards: $msg"
 fi

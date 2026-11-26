@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Shared helpers for the workflow shell scripts. Source it; do not run it.
-# Requires bash 4+, git and jq.
+# Requires bash 4.4+ (empty "${arr[@]}" under set -u, wait -n), git and jq.
 
-if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
-    echo "workflow: bash 4+ required (macOS: brew install bash)" >&2
+wf_bash_ok() { [ "$1" -gt 4 ] || { [ "$1" = 4 ] && [ "$2" -ge 4 ]; }; }
+if ! wf_bash_ok "${BASH_VERSINFO[0]:-0}" "${BASH_VERSINFO[1]:-0}"; then
+    echo "workflow: bash 4.4+ required, this is ${BASH_VERSION:-unknown} (macOS: brew install bash)" >&2
     exit 2
 fi
 
@@ -197,6 +198,44 @@ wf_kill_tree() {
     return 0
 }
 
+# wf_timed SECS LOG DIR CMD [PGFILE]: run CMD (bash -c) in DIR in its own
+# process group, output to LOG (- = this stderr), stdin from /dev/null. A watchdog TERMs then
+# KILLs the whole group after SECS; the return code is then 124. The group
+# and watchdog pids go to PGFILE when given (for a caller's signal trap).
+# Turns job control on for the call (each job its own group) and restores it.
+wf_timed() {
+    local secs="$1" log="$2" wdir="$3" cmd="$4" pgfile="${5:-}" pid wd rc=0 mark had_m=0
+    case "$-" in *m*) had_m=1 ;; esac
+    mark="$(mktemp "${TMPDIR:-/tmp}/wf-timed.XXXXXX")"
+    rm -f "$mark"
+    set -m
+    if [ "$log" = - ]; then
+        (cd "$wdir" && exec bash -c "$cmd") >&2 </dev/null &
+    else
+        (cd "$wdir" && exec bash -c "$cmd") >"$log" 2>&1 </dev/null &
+    fi
+    pid=$!
+    [ -z "$pgfile" ] || echo "$pid" >"$pgfile"
+    (
+        sleep "$secs"
+        touch "$mark"
+        kill -TERM -- "-$pid"
+        sleep 5
+        kill -KILL -- "-$pid"
+    ) >/dev/null 2>&1 &
+    wd=$!
+    [ -z "$pgfile" ] || echo "$wd" >>"$pgfile"
+    wait "$pid" || rc=$?
+    kill -- "-$wd" 2>/dev/null || true
+    wait "$wd" 2>/dev/null || true
+    [ "$had_m" = 1 ] || set +m
+    if [ -f "$mark" ]; then
+        rm -f "$mark"
+        rc=124
+    fi
+    return "$rc"
+}
+
 # Resolved path (symlinks followed) of an existing dir, else the path as given.
 wf_real() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"; }
 
@@ -232,22 +271,48 @@ wf_proc_cwds() {
     fi
 }
 
-# wf_sweep DIR: kill (wf_kill_tree) every process whose cwd is inside DIR,
-# except this shell and its ancestors. Prints `stopped pid N` per process.
-wf_sweep() {
-    local dir real p pid cwd
-    dir="${1%/}"
-    real="$(wf_real "$dir")"
-    declare -A anc=()
+# Processes that are never killed by a sweep: the caller and its ancestors,
+# claude processes and their descendants (MCP servers, a live session's
+# tools). wf_proc_snapshot takes one ps snapshot; then wf_is_mine PID (the
+# caller or an ancestor) and wf_under_claude PID (a claude process or below
+# one) answer from it.
+wf_proc_snapshot() {
+    local p pp c
+    declare -gA WF_PPID=() WF_COMM=() WF_MINE=()
+    while read -r p pp c; do
+        WF_PPID[$p]="$pp" WF_COMM[$p]="$c"
+    done < <(ps -A -o pid= -o ppid= -o comm= 2>/dev/null)
     p="${BASHPID:-$$}"
     while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
-        anc[$p]=1
-        p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+        WF_MINE[$p]=1
+        pp="${WF_PPID[$p]:-}"
+        [ -n "$pp" ] || pp="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+        p="$pp"
     done
+}
+wf_is_mine() { [ -n "${WF_MINE[$1]:-}" ]; }
+wf_under_claude() {
+    local p="$1" n=0
+    while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$n" -lt 64 ]; do
+        [[ "${WF_COMM[$p]:-}" =~ ^claude ]] && return 0
+        p="${WF_PPID[$p]:-}"
+        n=$((n + 1))
+    done
+    return 1
+}
+
+# wf_sweep DIR: kill (wf_kill_tree) every process whose cwd is inside DIR,
+# except the protected ones above. Prints `stopped pid N` per process.
+wf_sweep() {
+    local dir real pid cwd
+    dir="${1%/}"
+    real="$(wf_real "$dir")"
+    wf_proc_snapshot
     while IFS=$'\t' read -r pid cwd; do
-        [ -n "${anc[$pid]:-}" ] && continue
         cwd="${cwd% (deleted)}"
-        case "$cwd/" in "$dir"/* | "$real"/*) wf_kill_tree "$pid" && echo "stopped pid $pid" ;; esac
+        case "$cwd/" in "$dir"/* | "$real"/*) ;; *) continue ;; esac
+        if wf_is_mine "$pid" || wf_under_claude "$pid"; then continue; fi
+        wf_kill_tree "$pid" && echo "stopped pid $pid"
     done < <(wf_proc_cwds)
 }
 

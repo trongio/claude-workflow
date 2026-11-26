@@ -2,7 +2,7 @@
 # wf: single entry point for the workflow plugin. On the Bash tool's PATH when
 # the plugin is enabled; elsewhere run it by path or symlink it into ~/.local/bin.
 #
-#   card commands     list next claim move new prio show stats queue root   (bun scripts/wf.ts)
+#   card commands     list next claim show move new prio queue stats root approve (bun scripts/wf.ts)
 #   wf board          live board on http://127.0.0.1:8095
 #   wf gates [...]    quality gates (wf gates --help)
 #   wf merge BRANCH   merge a branch into the base branch under a lock

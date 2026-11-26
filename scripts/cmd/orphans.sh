@@ -67,13 +67,9 @@ if [ -n "$target" ]; then
 fi
 mapfile -t wts < <(git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p' | grep -vxF "$main" || true)
 
-# Our own ancestors (the agent session running this) never count.
-declare -A mine=()
-p=$$
-while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
-    mine[$p]=1
-    p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
-done
+# Our own ancestors (the agent session running this) never count; claude
+# processes and their descendants are listed but never killed.
+wf_proc_snapshot
 
 re='node|vite|next|nuxt|webpack|esbuild|tsx|bun|deno|php|artisan|pest|phpunit|vitest|jest|playwright|chrom|firefox|webkit|go|air|python|uvicorn|gunicorn|pytest|cargo|ruby|rails|puma|java|gradle|frankenphp|caddy|npm|pnpm|yarn'
 
@@ -88,7 +84,7 @@ ports_of() {
 
 rows=() us=$'\x1f'
 while IFS=$'\t' read -r pid cwd; do
-    [ -n "${mine[$pid]:-}" ] && continue
+    wf_is_mine "$pid" && continue
     cwd="${cwd% (deleted)}"
     hit="" stale=false
     for w in "${wts[@]}"; do
@@ -117,26 +113,11 @@ done < <(
     wf_proc_cwds | sed 's|$|/|' | { grep -F "${pre[@]}" || true; } | sed 's|/$||'
 )
 
-# Processes with a claude ancestor (MCP servers, a live session's tools): one ps snapshot.
-declare -A ppid_of=() comm_of=()
-while read -r p pp c; do
-    ppid_of[$p]="$pp" comm_of[$p]="$c"
-done < <(ps -A -o pid= -o ppid= -o comm= 2>/dev/null)
-under_claude() {
-    local p="${ppid_of[$1]:-}" n=0
-    while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$n" -lt 64 ]; do
-        [[ "${comm_of[$p]:-}" =~ ^claude ]] && return 0
-        p="${ppid_of[$p]:-}"
-        n=$((n + 1))
-    done
-    return 1
-}
-
 killed=0 kept=0
 for i in "${!rows[@]}"; do
     IFS="$us" read -r pid ports cwd age comm stale hit <<<"${rows[$i]}"
     owned=false
-    under_claude "$pid" && owned=true
+    wf_under_claude "$pid" && owned=true
     rows[i]="${rows[$i]}$us$owned"
     [ "$kill_them" = 1 ] && [ "$hit" != "$main" ] || continue
     if [ "$owned" = true ]; then

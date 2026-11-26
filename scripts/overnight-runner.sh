@@ -176,7 +176,9 @@ supervise() {
     kill -- "-$wd" 2>/dev/null
     wait "$wd" 2>/dev/null
     # Whatever the session left behind: its process group, then anything with
-    # its cwd inside the worktree (a server that left the group).
+    # its cwd inside the worktree (a server that left the group), except claude
+    # processes, their descendants (an interactive session there, its MCP
+    # servers) and this runner.
     wf_kill_tree "$pid"
     wf_sweep "$wt" >>"$logfile" 2>&1
     rm -f "$dir/run/$id.pids"

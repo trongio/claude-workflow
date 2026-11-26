@@ -17,7 +17,10 @@
 #   cache: build caches copied copy-on-write (cp --reflink=auto) when missing.
 #   copy:  files copied once when missing, e.g. [".env"]
 #   env:   KEY -> template with {id} {slug} {port}, written to .workflow/env
-#   setup: shell commands run in the worktree afterwards, in order.
+#   setup: shell commands run in the worktree afterwards, in order; the first
+#          failure stops wt-init with its exit code.
+#   setupTimeout: seconds per setup or install command (default 900); its
+#          process group is then killed and wt-init exits 124.
 # Also aligns core.hooksPath with the main checkout and, for a task worktree
 # (.workflow/worktrees/<ID>), records it (branch, port, databases) in the
 # resource ledger that wf prune cleans up from. Other worktrees are never recorded.
@@ -38,6 +41,7 @@ dir="$(cd "${1:-.}" && git rev-parse --show-toplevel)"
 cd "$dir"
 main="$(wf_main)"
 cfg="$(wf_config)"
+setup_tmo="$(wf_get .worktree.setupTimeout 900)"
 
 if [ "$main" = "$dir" ]; then
     echo "ready: $dir (main checkout)"
@@ -137,7 +141,13 @@ while IFS= read -r name; do
     read -r lock inst <<<"$(install_for "$dir/$sub" "$(basename "$name")")" || true
     if [ -n "$lock" ] && ! cmp -s "$main/$sub/$lock" "$dir/$sub/$lock"; then
         echo "wt-init: $sub/$lock differs from main, running: $inst" >&2
-        (cd "$dir/$sub" && bash -c "$inst") >&2 || echo "wt-init: $inst failed" >&2
+        rc=0
+        wf_timed "$setup_tmo" - "$dir/$sub" "$inst" || rc=$?
+        case "$rc" in
+        0) ;;
+        124) echo "wt-init: $inst killed after ${setup_tmo}s (worktree.setupTimeout)" >&2 ;;
+        *) echo "wt-init: $inst failed" >&2 ;;
+        esac
     fi
 done < <(jq -r '.worktree.link // [] | .[]' "$cfg")
 
@@ -186,7 +196,15 @@ fi
 while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
     echo "wt-init: $cmd" >&2
-    bash -c "$cmd" >&2
+    rc=0
+    wf_timed "$setup_tmo" - "$dir" "$cmd" || rc=$?
+    if [ "$rc" = 124 ]; then
+        echo "wt-init: $cmd killed after ${setup_tmo}s (worktree.setupTimeout)" >&2
+        exit 124
+    elif [ "$rc" != 0 ]; then
+        echo "wt-init: $cmd failed (exit $rc)" >&2
+        exit "$rc"
+    fi
 done < <(jq -r '.worktree.setup // [] | .[]' "$cfg")
 
 echo "ready: $dir"
