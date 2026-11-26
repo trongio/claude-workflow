@@ -166,7 +166,13 @@ printf '\n%d checks passed (scratch: %s)\n' "$pass" "$dir"
 
 # Gate, worktree, ledger and runner behavior: tests/infra.sh (WF_SMOKE_INFRA=0 skips).
 if [ "${WF_SMOKE_INFRA:-1}" = 1 ]; then
-    "$repo/tests/infra.sh" "$dir-infra" | tail -n 1
+    "$repo/tests/infra.sh" "$dir-infra" >"$dir-infra.log" 2>&1 || die "tests/infra.sh: $(tail -n 5 "$dir-infra.log")"
+    tail -n 1 "$dir-infra.log"
+fi
+# Data-safety regressions: tests/safety.sh (WF_SMOKE_SAFETY=0 skips).
+if [ "${WF_SMOKE_SAFETY:-1}" = 1 ]; then
+    "$repo/tests/safety.sh" "$dir-safety" >"$dir-safety.log" 2>&1 || die "tests/safety.sh: $(tail -n 5 "$dir-safety.log")"
+    tail -n 1 "$dir-safety.log"
 fi
 
 if command -v hyperfine >/dev/null && [ "${WF_SMOKE_BENCH:-1}" = 1 ]; then
