@@ -182,7 +182,7 @@ Skills (type them in Claude Code):
 
 | Area | Commands |
 |---|---|
-| Cards | `wf new`, `wf list`, `wf next`, `wf claim`, `wf show`, `wf move ID STATUS [--verified "how"]`, `wf note`, `wf park ID "owner: ..."`, `wf prio`, `wf status`, `wf board` |
+| Cards | `wf new`, `wf list`, `wf next`, `wf claim`, `wf show`, `wf move ID STATUS [--verified "how"]` (`done --verified` commits the card), `wf note`, `wf park ID "owner: ..."`, `wf prio`, `wf status`, `wf board` |
 | Task lifecycle | `wf start ID`, `wf plan-save ID FILE`, `wf brief ID --stream N`, `wf risk [BASE] [--explain]`, `wf outcome ID [--tick 1,2]`, `wf finish ID`, `wf cards-commit -m "msg"` (on `baseBranch` only), `wf handoff` |
 | Gates | `wf gates [--release] [--json] [--last] [--fix] [--only a,b]` (an unknown name is an error), `wf gate-log [GATE]`, `wf test-affected [BASE]` |
 | Health | `wf doctor [--strict]`, `wf orphans [--kill ID or DIR] [--all]`, `wf prune [--apply [ID]]`, `wf fix-sweep [--since DATE]` |
