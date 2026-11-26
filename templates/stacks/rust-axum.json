@@ -1,0 +1,186 @@
+{
+  "id": "rust-axum",
+  "title": "Rust HTTP API (axum + tokio + sqlx + Postgres)",
+  "summary": "Maximum compile-time guarantees and performance: axum on tokio, sqlx with compile-time checked queries, one static binary.",
+  "fits": [
+    "performance or memory critical services",
+    "safety-critical logic where the compiler should prove invariants",
+    "teams fluent in Rust"
+  ],
+  "avoid": [
+    "fast iteration on product UI",
+    "a 4-week deadline with a team new to Rust",
+    "batteries-included auth, admin and i18n"
+  ],
+  "languages": [
+    "go-rust"
+  ],
+  "ui": false,
+  "uiDefault": "native",
+  "uiOptions": [
+    "native"
+  ],
+  "packages": [
+    "eol:rust",
+    "crates:axum",
+    "crates:tokio",
+    "crates:sqlx",
+    "crates:serde",
+    "crates:tower-http",
+    "crates:tracing",
+    "crates:thiserror",
+    "crates:utoipa",
+    "eol:postgresql"
+  ],
+  "commands": {
+    "install": "cargo fetch",
+    "dev": "cargo run",
+    "test": "cargo test --workspace",
+    "fmt": "cargo fmt"
+  },
+  "dev": {
+    "url": "http://127.0.0.1:8080"
+  },
+  "layout": [
+    "src/main.rs         wiring only",
+    "src/http/           routers and extractors (auth extractor on every state-changing route)",
+    "src/domain/         types that make illegal states unrepresentable; no I/O",
+    "src/db/             sqlx queries; migrations/ at the crate root; .sqlx/ offline data committed",
+    "tests/              integration tests against a real Postgres"
+  ],
+  "gates": [
+    {
+      "name": "cargo-test",
+      "cmd": "cargo test --quiet --workspace --lib --bins",
+      "when": [
+        "*.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+        ".sqlx/"
+      ],
+      "heavy": true,
+      "release": false,
+      "requires": [
+        "cargo"
+      ]
+    },
+    {
+      "name": "cargo-test-full",
+      "cmd": "cargo test --quiet --workspace --all-targets --all-features",
+      "when": [
+        "*.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+        ".sqlx/",
+        "tests/"
+      ],
+      "heavy": true,
+      "inner": false,
+      "requires": [
+        "cargo"
+      ]
+    },
+    {
+      "name": "clippy",
+      "cmd": "cargo clippy --quiet --workspace --all-targets --all-features -- -D warnings",
+      "when": [
+        "*.rs",
+        "Cargo.toml",
+        "Cargo.lock",
+        ".sqlx/"
+      ],
+      "fix": "cargo clippy --fix --allow-dirty --workspace",
+      "heavy": true,
+      "requires": [
+        "cargo"
+      ]
+    },
+    {
+      "name": "rustfmt",
+      "cmd": "cargo fmt --check",
+      "when": [
+        "*.rs",
+        "rustfmt.toml"
+      ],
+      "fix": "cargo fmt",
+      "requires": [
+        "cargo"
+      ]
+    },
+    {
+      "name": "sqlx-prepare",
+      "cmd": "cargo sqlx prepare --workspace --check",
+      "when": [
+        "src/db/",
+        "migrations/",
+        ".sqlx/"
+      ],
+      "inner": false,
+      "requires": [
+        "cargo-sqlx"
+      ]
+    },
+    {
+      "name": "cargo-deny",
+      "cmd": "cargo deny check",
+      "when": [
+        "Cargo.toml",
+        "Cargo.lock",
+        "deny.toml"
+      ],
+      "inner": false,
+      "requires": [
+        "cargo-deny"
+      ]
+    },
+    {
+      "name": "secrets",
+      "cmd": "gitleaks detect --no-banner --redact --exit-code 1",
+      "when": [
+        "*"
+      ],
+      "inner": false,
+      "cache": false,
+      "requires": [
+        "gitleaks"
+      ]
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "git ls-files -z '*.sh' | xargs -0 -r shellcheck",
+      "when": [
+        "*.sh"
+      ],
+      "requires": [
+        "shellcheck"
+      ]
+    }
+  ],
+  "worktree": {
+    "link": [],
+    "copy": [
+      ".env"
+    ],
+    "setup": [],
+    "cache": [
+      "target/"
+    ],
+    "env": {
+      "DATABASE_URL": "postgres://app:app@127.0.0.1:5432/app_{slug}",
+      "SQLX_OFFLINE": "true",
+      "PORT": "{port}"
+    }
+  },
+  "risk": {
+    "high": [
+      "migrations/",
+      "src/auth/",
+      "src/http/middleware/",
+      "src/billing/",
+      "infra/",
+      "deploy/",
+      ".github/"
+    ]
+  },
+  "standards": "rust-axum.standards.md"
+}

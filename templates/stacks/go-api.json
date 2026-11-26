@@ -1,0 +1,192 @@
+{
+  "id": "go-api",
+  "title": "Go HTTP API (chi + pgx + sqlc + Postgres)",
+  "summary": "A small, fast, statically typed API service or edge agent: stdlib-first, SQL written by hand and type-checked by sqlc, one static binary.",
+  "fits": [
+    "APIs, workers and device/edge agents",
+    "high request volume on small hardware",
+    "long-lived services that must be simple to operate"
+  ],
+  "avoid": [
+    "a rich web UI is the product (pair it with a UI stack)",
+    "you need an admin, auth and i18n framework out of the box"
+  ],
+  "languages": [
+    "go-rust"
+  ],
+  "ui": false,
+  "uiDefault": "native",
+  "uiOptions": [
+    "native"
+  ],
+  "packages": [
+    "eol:go",
+    "go:github.com/go-chi/chi/v5",
+    "go:github.com/jackc/pgx/v5",
+    "go:github.com/sqlc-dev/sqlc",
+    "go:github.com/pressly/goose/v3",
+    "go:github.com/golangci/golangci-lint/v2",
+    "go:golang.org/x/vuln",
+    "eol:postgresql"
+  ],
+  "commands": {
+    "install": "go mod download",
+    "dev": "go run ./cmd/api",
+    "test": "go test -race ./...",
+    "fmt": "gofmt -w . && golangci-lint fmt"
+  },
+  "dev": {
+    "url": "http://127.0.0.1:8080"
+  },
+  "layout": [
+    "cmd/api/            main: wiring only (config, logger, server)",
+    "internal/http/      handlers: decode, authorize, call a service, encode",
+    "internal/<domain>/  services and their interfaces; no net/http imports",
+    "internal/db/        sqlc queries (queries/*.sql) and generated code; migrations/",
+    "api/openapi.yaml    the contract; a test asserts routes and spec agree"
+  ],
+  "gates": [
+    {
+      "name": "go-test",
+      "cmd": "go test ./...",
+      "when": [
+        "*.go",
+        "go.mod",
+        "go.sum",
+        ".golangci.y*ml",
+        "testdata/"
+      ],
+      "heavy": true,
+      "release": false,
+      "requires": [
+        "go"
+      ]
+    },
+    {
+      "name": "go-test-full",
+      "cmd": "go test -race -count=1 -shuffle=on ./...",
+      "when": [
+        "*.go",
+        "go.mod",
+        "go.sum",
+        ".golangci.y*ml",
+        "testdata/"
+      ],
+      "heavy": true,
+      "inner": false,
+      "requires": [
+        "go"
+      ]
+    },
+    {
+      "name": "go-vet",
+      "cmd": "go vet ./...",
+      "when": [
+        "*.go",
+        "go.mod",
+        "go.sum",
+        ".golangci.y*ml"
+      ],
+      "heavy": true,
+      "requires": [
+        "go"
+      ]
+    },
+    {
+      "name": "gofmt",
+      "cmd": "test -z \"$(gofmt -l .)\"",
+      "when": [
+        "*.go"
+      ],
+      "fix": "gofmt -w .",
+      "requires": [
+        "gofmt"
+      ]
+    },
+    {
+      "name": "golangci-lint",
+      "cmd": "golangci-lint run",
+      "when": [
+        "*.go",
+        "go.mod",
+        "go.sum",
+        ".golangci.y*ml"
+      ],
+      "fix": "golangci-lint run --fix",
+      "heavy": true,
+      "requires": [
+        "golangci-lint"
+      ]
+    },
+    {
+      "name": "sqlc",
+      "cmd": "sqlc diff && sqlc vet",
+      "when": [
+        "internal/db/",
+        "sqlc.y*ml",
+        "migrations/"
+      ],
+      "requires": [
+        "sqlc"
+      ]
+    },
+    {
+      "name": "govulncheck",
+      "cmd": "govulncheck ./...",
+      "when": [
+        "go.mod",
+        "go.sum"
+      ],
+      "inner": false,
+      "requires": [
+        "govulncheck"
+      ]
+    },
+    {
+      "name": "secrets",
+      "cmd": "gitleaks detect --no-banner --redact --exit-code 1",
+      "when": [
+        "*"
+      ],
+      "inner": false,
+      "cache": false,
+      "requires": [
+        "gitleaks"
+      ]
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "git ls-files -z '*.sh' | xargs -0 -r shellcheck",
+      "when": [
+        "*.sh"
+      ],
+      "requires": [
+        "shellcheck"
+      ]
+    }
+  ],
+  "worktree": {
+    "link": [],
+    "copy": [
+      ".env"
+    ],
+    "setup": [],
+    "cache": [],
+    "env": {
+      "DATABASE_URL": "postgres://app:app@127.0.0.1:5432/app_{slug}",
+      "PORT": "{port}"
+    }
+  },
+  "risk": {
+    "high": [
+      "migrations/",
+      "internal/auth/",
+      "internal/http/middleware/",
+      "internal/billing/",
+      "infra/",
+      "deploy/",
+      ".github/"
+    ]
+  },
+  "standards": "go-api.standards.md"
+}

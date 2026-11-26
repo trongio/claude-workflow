@@ -1,0 +1,125 @@
+# {{PROJECT}} UI/UX standards
+
+Normative for everything a user sees. Seeded by `/workflow:plan-project` on {{DATE}} (UI kit: `{{UI_ID}}`).
+Enforcement tags as in `docs/ENGINEERING-STANDARDS.md`: `[hook]`, `[ci: gate]`, `[guard-test]`,
+`[review]`, `[ux]` (the ux-critic and the verifier check it on screenshots), `[not yet: X]`.
+
+**Ranking:** security and data loss > ease of use for the person doing the job > code quality > speed.
+A surface is finished when a real user can complete the job and recover from a mistake on it, not when
+it renders.
+
+## 1. Who and what
+
+<!-- tune: the people, their devices and the jobs; the ux-critic grades against this -->
+- Product: {{PRODUCT_SUMMARY}}
+- Core jobs (each must take the fewest steps and fields):
+{{JOBS}}
+- Surfaces: {{SURFACES}}. Locales: {{LOCALES}}; widest `{{WIDEST_LOCALE}}`.
+<!-- /tune -->
+
+## 2. Components: catalogued only
+
+- **Use only catalogued components.** `CATALOG.md` (next to the components) lists every component with its
+  props, variants and when to use it. Read it before building anything. [review]
+- **A new component enters the catalog and the gallery in the same change.** The gallery is a dev-only page
+  (`/dev/gallery`) that renders every component in every variant and state, in the widest locale, at
+  375 px and 1440 px. A component missing from either is a review blocker. [review] [not yet: a guard test that every exported component appears in CATALOG.md and the gallery]
+- **Typed options, not copies.** A component that nearly fits gets a typed `variant`, `tone` or `size` option.
+  Never copy it, never restyle it from a page. A page's `className` (or style hook) only places a component:
+  margin, width, grid or flex placement. [review] [ci: dupes]
+- Every exported component exports its props type (`<Name>Props`). [review]
+- Two blocks of the same markup become one component; the duplicate-code gate only shrinks. [ci: dupes]
+
+## 3. Tokens only
+
+- Colours, spacing, radii, shadows, type sizes, line heights, z-indices and motion durations come from the
+  design tokens. No hex colours, no magic pixel values, no inline styles in components or pages. [ci: tokens]
+- **Colour means status only.** Accent colour marks the one primary action and status (success, warning,
+  danger, pending, info). Decoration is neutral. Status is never colour alone: add an icon or text. [review] [ux]
+- Contrast is AA (4.5:1 body text, 3:1 large text and UI parts), **measured** on the rendered page (the
+  computed colours, both themes), not judged by eye. [ux] [not yet: an automated contrast check in `wf check`]
+
+## 4. Layout and responsiveness
+
+- **Mobile first.** Design and build the 375 px layout first, then add columns. Check every surface at
+  **320, 375, 768, 1024 and 1440 px**. Zero horizontal page scroll at every width. [ux]
+- **Verification is by LOOKING** at screenshots in the widest locale (`{{WIDEST_LOCALE}}`). A zero-overflow
+  measurement (`scrollWidth === clientWidth`) is not verification: it passes while a word shreds
+  mid-syllable, a sentence clips inside a scrolling cell or a button sits off-screen. Open the PNGs. [ux]
+- The visual check aborts when the page is not in the widest locale; a narrower locale passes optimistically. [ux]
+- **Container queries for rows in columns.** A row that lives inside a card, a sidebar or a column adapts to
+  its container's width, not the viewport's. [review]
+- **Tap targets at least 44 x 44 px** with 8 px between neighbours; nothing important only on hover. [ux]
+- Images have `alt` (a key, or empty for decoration) and explicit `width`/`height` (or aspect ratio), so the
+  layout does not shift. [review] [ux]
+- Reserve space for loading content (skeletons of the final shape), no layout shift when data arrives. [ux]
+
+## 5. States are designed, not defaulted
+
+Every view designs all of these before it is done: [review] [ux]
+- **Empty**: says what this is, why it is empty and the one action that fills it.
+- **Loading**: skeleton in the final shape; a slow action shows progress, not a frozen button.
+- **Error**: says what failed in plain words, what the user can do, and keeps their work.
+- **Never connected / never set up**: a third state, distinct from "nothing yet" and "set up and quiet".
+  A device that has never called home is not "online, no events".
+- **Pending shows pending.** A submitted-but-unconfirmed change (queued command, unconfirmed payment,
+  awaiting approval) looks pending until confirmed; it never shows success early.
+- **Partial permission**: what a user cannot do is either hidden (if they never can) or disabled with the
+  reason (if they could under other conditions).
+
+## 6. Actions and feedback
+
+- **One primary action per view**, visually dominant; everything else is secondary or tertiary. [ux]
+- **Disabled controls say why.** Use `aria-disabled="true"` (not the `disabled` attribute, which blocks
+  focus and tooltips) and a reason the user can reach: a tooltip on hover AND focus, and on touch a tap
+  that shows the reason. [review] [ux]
+- **A refused write keeps the input and says why**, next to the field it concerns, using the server's
+  reason (a message key). The user never retypes a form. [review] [ux]
+- **Destructive actions** are visually distinct, confirmed, and name the object ("Delete invoice 1042").
+  **The destructive verb is lexically distinct from the dismiss verb in every locale**: if one word means
+  both "cancel" and "revoke" in a locale, the confirm dialog must use a different word for one of them. [review] [i18n review]
+- Undo beats confirm for reversible actions. [review]
+- **No stacked descriptions**: one title and at most one line of help per section; a paragraph above a form
+  that repeats its labels is noise. [ux]
+- **Truncation shows a tooltip only when the text is actually clipped** (measure, then attach). A tooltip on
+  text that is fully visible is noise; a clipped value without one hides data. [review]
+- Errors say how to fix them; success says what happened and what is next. [ux]
+
+## 7. Copy and language
+
+- Plain, concrete words in the user's language and domain; no filler ("Seamlessly manage your..."). [ux]
+- Every visible string, `aria-label`, `title`, `alt`, `placeholder` and `sr-only` text is an i18n key. Library
+  defaults that ship English (`<span class="sr-only">Close</span>`) are replaced when the component is
+  added. [hook] [ci: i18n check] [review]
+- Numbers, dates, currencies and lists are formatted with the locale's `Intl` formatter (pin `hourCycle`
+  where the locale's default surprises users). [review]
+- No dashes as sentence punctuation in UI copy; use full stops and commas. [review]
+
+## 8. Accessibility
+
+- Every input has a visible label; errors are linked with `aria-describedby`; focus is visible on every
+  interactive element; the tab order follows the visual order. [review] [ux]
+- Dialogs trap focus and return it on close; `Escape` closes non-destructive dialogs. [review]
+- Motion respects `prefers-reduced-motion`. [review]
+
+## 9. Anti-template rules (the ux-critic's slop list)
+
+A screen that looks generated loses trust. Each of these is a finding: [ux]
+- gradient-blob or mesh-gradient heroes; glassmorphism used as decoration;
+- three identical feature cards with an icon, a title and two lines;
+- emoji used as icons; stock "rocket", "sparkles" or "magic wand" imagery for ordinary features;
+- everything rounded with a soft shadow; cards inside cards inside cards;
+- centred everything, oversized hero type on an app screen, marketing copy inside the product;
+- filler copy ("Unlock the power of...", "Seamlessly"), lorem ipsum, fake testimonials or metrics;
+- a dashboard of big-number tiles that answer no question the user has;
+- a different look for the same job on two screens.
+Distinctive means: the layout follows the job, density fits the user (an operator console is dense, a
+first-run flow is calm), type and spacing come from the scale, and one accent marks the next step.
+
+{{UI_RULES}}
+
+## Project-specific UI rules
+
+<!-- tune: brand, density, the design direction chosen in planning, product-specific patterns -->
+- Design direction: (filled from the direction chosen in planning).
+<!-- /tune -->
