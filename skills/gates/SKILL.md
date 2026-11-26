@@ -31,8 +31,15 @@ Reading the table:
 On red, `wf gate-log [GATE]` prints the first failing test names and 20 lines
 of context. Use it instead of reading the log. `wf gates --last` reprints the
 previous table when nothing changed. `--fix` runs each gate's `fix` command
-(formatters) first; `--only a,b` runs the named gates (an unknown name is an
-error, not a silent skip); `--json` for scripts.
+(formatters) first, under the gate's timeout; `--only a,b` runs the named
+gates (an unknown name is an error, not a silent skip); `--json` for scripts:
+one line, every result with a `reason` (empty when the gate ran, else "not in
+release", "release only", "no matching changes", "pending" or "not
+selected"). Only a SKIP with reason "not in release" is acceptable in a
+release result. A failing gate shows at most 20 lines of its log (the
+`gatesTailLines` setting, capped so a block stays within 25 lines).
+`release.cmd` is killed after `release.timeout` (else the largest gate
+timeout, else 3600 s) and reports TIMEOUT.
 
 Who runs gates: the manager and implementers (and the mechanic after a
 multi-step edit). Reviewers never do: a run overwrites

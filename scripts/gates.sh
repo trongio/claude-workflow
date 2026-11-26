@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run the project's quality gates in parallel and print a compact table.
 #
-# Usage: gates.sh [--all] [--only a,b] [--base REF] [--fix] [--no-cache]
-#                 [--timeout SEC] [--release] [--last] [--json] [--list]
+# Usage: wf gates [--all] [--only a,b] [--base REF] [--fix] [--no-cache]
+#                [--timeout SEC] [--release] [--last] [--json] [--list]
 #
 #   (default)    gates whose `when` globs match a changed file (vs the base,
 #                plus uncommitted and untracked files); no `when` = always.
@@ -10,14 +10,21 @@
 #   --only a,b   just these gates (still subject to `when` unless --all).
 #   --base REF   diff base. Default: merge base with the base branch, or the
 #                first parent when HEAD is a merge commit on the base branch.
-#   --fix        run each selected gate's `fix` command first (formatters).
+#   --fix        run each selected gate's `fix` command first (formatters), in
+#                its own process group, under the gate's timeout.
 #   --no-cache   do not skip gates whose inputs match a previous PASS.
-#   --timeout S  override every gate's timeout (default per gate 900 s).
+#   --timeout S  override every gate's timeout (default per gate 900 s) and
+#                the release.cmd timeout.
 #   --release    the full pre-merge gate: release.cmd if set, else every gate
 #                with release != false, uncached. Logged to release.log.
+#                release.cmd times out after release.timeout, else the largest
+#                gate timeout, else 3600 s.
 #                Gates with inner: false (full suites) run only here or with --all.
 #   --last       reprint the previous table if the tree is unchanged.
 #   --json       print .workflow/gates-last.json (one line) instead of the table.
+#                Each result has a `reason` ("" when the gate ran, else e.g.
+#                "not in release", "release only", "no matching changes",
+#                "pending", "not selected").
 #   --list       print the gates and whether each would run, then exit.
 #
 # Per gate: cwd, timeout (TIMEOUT kills the process group, red), pending
@@ -59,7 +66,7 @@ while [ $# -gt 0 ]; do
     --base=*) base="${1#--base=}" ;;
     --timeout=*) tmo="${1#--timeout=}" ;;
     -h | --help)
-        sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+        wf_help "$0"
         exit 0
         ;;
     *)
@@ -98,18 +105,28 @@ last_json="$state/gates-last.json"
     read -r keep_keys
     read -r base_branch
     read -r release_log
+    read -r release_tmo
     IFS= read -r release_cmd
-} < <(jq -r '(.gatesCache // true), (.gatesTailLines // 30), (.gatesJobs // 0), (.gatesCacheKeys // 8),
-    (.baseBranch // ""), (.release.log // ".workflow/release.log"), ((.release.cmd // "") | gsub("\n"; " "))' "$cfg")
+} < <(jq -r '(.gatesCache // true), (.gatesTailLines // 20), (.gatesJobs // 0), (.gatesCacheKeys // 8),
+    (.baseBranch // ""), (.release.log // ".workflow/release.log"),
+    (.release.timeout // ([.gates[]? | .timeout // empty] | max) // 3600 | tostring),
+    ((.release.cmd // "") | gsub("\n"; " "))' "$cfg")
 [ "$g_cache" = false ] && use_cache=0
+# A failure block stays within 25 lines: a blank, a header and the tail.
+[ "$tail_lines" -le 23 ] 2>/dev/null || tail_lines=23
 [ "$release" = 1 ] && use_cache=0 && all=1
 [ -n "$base_branch" ] || base_branch="$(wf_base_branch)"
 
-# A fresh worktree missing its dependency dirs gets wt-init first.
+# A fresh task worktree missing its dependency dirs gets wt-init first; any
+# other worktree (the user's own) only gets a warning, never a ledger entry.
 if [ "$root" != "$(wf_main)" ]; then
     while IFS= read -r p; do
         if [ -n "$p" ] && [ ! -e "$p" ]; then
-            "$here/wt-init.sh" "$root" >/dev/null
+            if wf_is_task_dir "$root"; then
+                "$here/wt-init.sh" "$root" >/dev/null
+            else
+                echo "gates: $p is missing in $root (run wf wt-init there to copy it)" >&2
+            fi
             break
         fi
     done < <(jq -r '.worktree.link // [] | .[]' "$cfg")
@@ -195,6 +212,32 @@ if [ "$last" = 1 ] && [ -f "$state/gates-last.txt" ] && [ -f "$last_json" ]; the
     echo "gates: tree changed since the last run, running" >&2
 fi
 
+# timed SECS LOG NAME DIR CMD: run CMD in DIR in its own process group (pgids
+# in $tmp/pg.NAME for the signal trap), output to LOG. A watchdog TERMs then
+# KILLs the group after SECS; the return code is then 124. Needs set -m.
+timed() {
+    local secs="$1" log="$2" name="$3" wdir="$4" cmd="$5" pid wd rc
+    rm -f "$tmp/timeout.$name"
+    (cd "$wdir" && exec bash -c "$cmd") >"$log" 2>&1 </dev/null &
+    pid=$!
+    echo "$pid" >"$tmp/pg.$name"
+    (
+        sleep "$secs"
+        touch "$tmp/timeout.$name"
+        kill -TERM -- "-$pid"
+        sleep 5
+        kill -KILL -- "-$pid"
+    ) >/dev/null 2>&1 &
+    wd=$!
+    echo "$wd" >>"$tmp/pg.$name"
+    wait "$pid"
+    rc=$?
+    kill -- "-$wd" 2>/dev/null
+    wait "$wd" 2>/dev/null
+    [ -f "$tmp/timeout.$name" ] && rc=124
+    return "$rc"
+}
+
 started_at="$(date +%s)"
 log_release() { if [ "$release" = 1 ]; then printf '%s\n' "$*" >>"$root/$release_log"; fi; }
 if [ "$release" = 1 ]; then
@@ -207,23 +250,22 @@ if [ "$release" = 1 ] && [ -n "$release_cmd" ]; then
     log_release "cmd: $release_cmd"
     set +e
     set -m
-    bash -o pipefail -c "$release_cmd" >"$logdir/release.log" 2>&1 </dev/null &
-    echo "$!" >"$tmp/pg.release"
-    wait "$!"
+    timed "${tmo:-$release_tmo}" "$logdir/release.log" release "$root" "set -o pipefail; $release_cmd"
     rc=$?
     set +m
     set -e
     secs=$(($(date +%s) - started_at))
     cat "$logdir/release.log" >>"$root/$release_log"
     log_release "exit $rc after ${secs}s sha $head_sha"
-    status=PASS
+    status=PASS note="exit $rc"
     [ "$rc" = 0 ] || status=FAIL
+    [ "$rc" = 124 ] && status=TIMEOUT note="killed after ${tmo:-$release_tmo}s"
     build_listing
     jq -n --arg sha "$head_sha" --arg tree "$(tree_hash)" --arg base "$base" --arg st "$status" \
         --argjson s "$secs" --argjson rc "$rc" \
         '{sha: $sha, tree: $tree, base: $base, release: true, exit: (if $rc == 0 then 0 else 1 end),
-          results: [{name: "release", status: $st, seconds: $s, cached: false, rerun: 0}]}' >"$last_json"
-    printf 'release | %s | %ss | exit %s | log %s\n' "$status" "$secs" "$rc" "$release_log" >"$state/gates-last.txt"
+          results: [{name: "release", status: $st, seconds: $s, cached: false, rerun: 0, reason: ""}]}' >"$last_json"
+    printf 'release | %s | %ss | %s | log %s\n' "$status" "$secs" "$note" "$release_log" >"$state/gates-last.txt"
     if [ "$json" = 1 ]; then
         jq -c . "$last_json"
     else
@@ -298,12 +340,20 @@ if [ "$list" = 1 ]; then
 fi
 
 if [ "$fix" = 1 ]; then
+    set +e
+    set -m
     for i in "${selected[@]}"; do
         [ -n "${fixes[$i]}" ] || continue
         echo "fix ${names[$i]}: ${fixes[$i]}"
-        (cd "$root/${cwds[$i]}" && bash -c "${fixes[$i]}") >"$logdir/${names[$i]}.fix.log" 2>&1 ||
-            tail -n 10 "$logdir/${names[$i]}.fix.log"
+        timed "${tmos[$i]}" "$logdir/${names[$i]}.fix.log" "fix.${names[$i]}" "$root/${cwds[$i]}" "${fixes[$i]}"
+        case $? in
+        0) ;;
+        124) echo "fix ${names[$i]}: TIMEOUT, killed after ${tmos[$i]}s (log .workflow/gates/${names[$i]}.fix.log)" ;;
+        *) tail -n 10 "$logdir/${names[$i]}.fix.log" ;;
+        esac
     done
+    set +m
+    set -e
     rm -f "$tmp/tree" # fixes change files
 fi
 
@@ -355,33 +405,14 @@ fi
 
 # One gate in its own process group, so a timeout kills everything it spawned.
 run_one() {
-    local i="$1" n="${names[$1]}" try=0 rc pid wd start=$SECONDS
+    local i="$1" n="${names[$1]}" try=0 rc start=$SECONDS
     local out="$tmp/res.$n" log="$logdir/$n.log"
     set +e
     set -m
     while :; do
-        rm -f "$out.timeout"
-        (cd "$root/${cwds[$i]}" && exec bash -c "${cmds[$i]}") >"$log" 2>&1 </dev/null &
-        pid=$!
-        echo "$pid" >"$tmp/pg.$n"
-        (
-            sleep "${tmos[$i]}"
-            touch "$out.timeout"
-            kill -TERM -- "-$pid"
-            sleep 5
-            kill -KILL -- "-$pid"
-        ) >/dev/null 2>&1 &
-        wd=$!
-        echo "$wd" >>"$tmp/pg.$n"
-        wait "$pid"
+        timed "${tmos[$i]}" "$log" "$n" "$root/${cwds[$i]}" "${cmds[$i]}"
         rc=$?
-        kill -- "-$wd" 2>/dev/null
-        wait "$wd" 2>/dev/null
-        if [ -f "$out.timeout" ]; then
-            rc=124
-            break
-        fi
-        [ "$rc" = 0 ] && break
+        [ "$rc" = 0 ] || [ "$rc" = 124 ] && break
         if [ -z "${rwhens[$i]}" ] || [ "$try" -ge "${rmaxs[$i]}" ] || ! grep -qE -- "${rwhens[$i]}" "$log"; then break; fi
         try=$((try + 1))
         cp "$log" "$log.try$try"
@@ -459,7 +490,7 @@ for i in "${!names[@]}"; do
             st=SKIP
         fi
         [ "$reason" != "not selected" ] && [ "$reason" != "not in release" ] && unproven+=("$n")
-        printf '%s\t%s\t0\tfalse\t0\n' "$n" "$st" >>"$tmp/rows"
+        printf '%s\t%s\t0\tfalse\t0\t%s\n' "$n" "$st" "$reason" >>"$tmp/rows"
         continue
     fi
     read -r rc secs try <"$tmp/res.$n" 2>/dev/null || {
@@ -479,7 +510,7 @@ for i in "${!names[@]}"; do
     if [ "$st" = PASS ]; then npass=$((npass + 1)); else red+=("$n"); fi
     if [ "$st" != PASS ] && [ "$try" -gt 0 ]; then note="$note (after $try rerun)"; fi
     row "$n" "$res" "$([ "$cached" = true ] && echo - || echo "$secs")" "$note"
-    printf '%s\t%s\t%s\t%s\t%s\n' "$n" "$st" "$secs" "$cached" "$try" >>"$tmp/rows"
+    printf '%s\t%s\t%s\t%s\t%s\t\n' "$n" "$st" "$secs" "$cached" "$try" >>"$tmp/rows"
     log_release "$n $st ${secs}s"
 done
 summary="$npass passed, ${#red[@]} red"
@@ -501,7 +532,7 @@ log_release "exit $code after $(($(date +%s) - started_at))s sha $head_sha"
 jq -Rn --arg sha "$head_sha" --arg tree "$tree" --arg base "$base" --argjson rel "$([ "$release" = 1 ] && echo true || echo false)" \
     --argjson code "$code" '{sha: $sha, tree: $tree, base: $base, release: $rel, exit: $code,
       results: [inputs | split("\t") | {name: .[0], status: .[1], seconds: (.[2] | tonumber),
-        cached: (.[3] == "true"), rerun: (.[4] | tonumber)}]}' <"$tmp/rows" >"$last_json"
+        cached: (.[3] == "true"), rerun: (.[4] | tonumber), reason: (.[5] // "")}]}' <"$tmp/rows" >"$last_json"
 cp "$tmp/table" "$state/gates-last.txt"
 if [ "$json" = 1 ]; then jq -c . "$last_json"; else cat "$tmp/table"; fi
 exit "$code"
