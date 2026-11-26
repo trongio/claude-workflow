@@ -85,6 +85,15 @@ cd "$proj"
 
 # --- Playwright: wf check / flow / shots ---------------------------------------
 "$wf" check --help | grep -q 'wrong-locale' && ok "check --help" || die "check --help"
+nourl="$dir/nourl"
+mkdir -p "$nourl"
+git -C "$nourl" init -q
+set +e
+out="$(cd "$nourl" && "$wf" check /good.html 2>&1)"
+rc=$?
+set -e
+[ "$rc" = 2 ] && grep -q 'set dev.url in .claude/workflow.json or pass a full URL' <<<"$out" &&
+    ok "check refuses a path with no dev.url" || die "check without dev.url (rc $rc)" "$out"
 have_pw=1
 if ! "$wf" check /good.html --viewports 1440 >/dev/null 2>"$dir/pw.err"; then
     if grep -q 'playwright unavailable' "$dir/pw.err"; then
@@ -191,11 +200,17 @@ printf '{\n\t"hello": "Gamarjoba"\n}\n' >"$tabs/lang/ka.json"
 printf '{\n    "nav": {\n        "home": "Home"\n    }\n}\n' >"$spaces/src/locales/en/common.json"
 printf '{\n    "nav": {\n        "home": "Mtavari"\n    }\n}\n' >"$spaces/src/locales/ka/common.json"
 out="$(cd "$tabs" && "$wf" lang set bye Bye nav.about About)"
-[ "$out" = "set 2 keys" ] && ok "lang set prints the count" || die "lang set" "$out"
+[ "$out" = "set 2 keys in en" ] && ok "lang set prints the count and the locale" || die "lang set" "$out"
 grep -q $'^\t"bye": "Bye"' "$tabs/lang/en.json" && ! grep -q '^ ' "$tabs/lang/en.json" && ok "lang set keeps tabs" || die "tabs" "$(cat "$tabs/lang/en.json")"
 (cd "$spaces" && "$wf" lang set common:nav.about About >/dev/null)
 grep -q '^        "about": "About"' "$spaces/src/locales/en/common.json" && ok "lang set keeps 4 spaces, nests in a namespace" ||
     die "spaces" "$(cat "$spaces/src/locales/en/common.json")"
+(cd "$tabs" && "$wf" lang set bye Bye --locale fr >/dev/null 2>&1) && die "lang set --locale fr without --create" ||
+    ok "lang set refuses a locale with no catalog"
+[ ! -e "$tabs/lang/fr.json" ] || die "refused locale still wrote a file"
+out="$(cd "$tabs" && "$wf" lang set bye Au-revoir --locale fr --create)"
+[ "$out" = "set 1 keys in fr" ] && grep -q '"bye": "Au-revoir"' "$tabs/lang/fr.json" && ok "lang set --create starts a catalog" || die "lang --create" "$out"
+rm "$tabs/lang/fr.json"
 out="$(cd "$spaces" && "$wf" lang get common.nav.home)"
 grep -q $'common.nav.home\tka\tMtavari' <<<"$out" && ok "lang get resolves nested keys per locale" || die "lang get" "$out"
 set +e

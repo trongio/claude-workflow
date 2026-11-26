@@ -6,14 +6,15 @@ import { format } from '../lang-merge-driver.ts';
 import { cfg, ensureDir, here } from '../pw/lib.ts';
 
 const HELP = `wf lang get KEY...                         value per locale ("-" when missing)
-wf lang set KEY VALUE [KEY VALUE...] [--locale X]   default locale: --base (en)
+wf lang set KEY VALUE [KEY VALUE...] [--locale X[,Y]] [--create]   default locale: --base (en)
 wf lang rm KEY... [--locale X]             default: every locale
 wf lang missing [--base en] [--all] [--json]   keys in the base locale missing elsewhere (exit 1)
 wf lang install-driver                     3-way per-key git merge driver for the catalogs
 Options: --dir DIR (else ux.localeDir, else the first of ${'lang/ locales/ src/locales/ resources/js/locales/ public/locales/ src/i18n/ resources/lang/'})
 Layouts: DIR/<locale>.json, or DIR/<locale>/<namespace>.json with keys "ns:key.path" or "ns.key.path".
 Keys resolve flat ("a.b" literal) first, then nested. Each write keeps the file's indent
-(tabs or N spaces) and is read back to assert it landed.`;
+(tabs or N spaces) and is read back to assert it landed. --locale names existing locales;
+a locale with no catalog yet is refused unless --create.`;
 
 const CANDIDATES = ['lang', 'locales', 'src/locales', 'resources/js/locales', 'public/locales', 'src/i18n', 'resources/lang'];
 const LOCALE = /^[a-z]{2,3}([-_][A-Za-z0-9]{2,4})?$/;
@@ -38,7 +39,7 @@ for (let i = 0; i < argv.length; i++) {
     if (['--dir', '--locale', '--base'].includes(a)) {
         if (i + 1 >= argv.length) die(`${a} needs a value`);
         flags[a.slice(2)] = argv[++i];
-    } else if (a === '--all' || a === '--json') flags[a.slice(2)] = true;
+    } else if (a === '--all' || a === '--json' || a === '--create') flags[a.slice(2)] = true;
     else if (a.startsWith('--')) die(`unknown flag ${a}`);
     else pos.push(a);
 }
@@ -139,7 +140,11 @@ const targets = (): string[] => {
     const l = flags.locale as string | undefined;
     if (!l) return [];
     const list = l.split(',');
-    for (const x of list) if (!LOCALE.test(x)) die(`bad locale ${x}`);
+    for (const x of list) {
+        if (!LOCALE.test(x)) die(`bad locale ${x}`);
+        if (!flags.create && !cat.locales.includes(x))
+            die(`no catalog for locale ${x} in ${relative(here, cat.dir) || '.'} (have ${cat.locales.join(', ')}); pass --create to start one`);
+    }
     return list;
 };
 
@@ -191,7 +196,7 @@ if (cmd === 'get') {
     const locales = targets().length ? targets() : [base];
     const changes = [];
     for (let i = 0; i < args.length; i += 2) for (const locale of locales) changes.push({ locale, key: args[i], value: args[i + 1] });
-    console.log(`set ${edit(changes)} keys`);
+    console.log(`set ${edit(changes)} keys in ${locales.join(', ')}`);
 } else if (cmd === 'rm') {
     if (!args.length) die('rm needs a KEY');
     const locales = targets().length ? targets() : cat.locales;

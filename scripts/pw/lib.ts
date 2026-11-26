@@ -43,7 +43,10 @@ export function cfg<T>(key: string, fallback: T): T {
 }
 
 export const devBase = (): string => (process.env.WF_DEV_URL || cfg('dev.url', 'http://localhost:3000')).replace(/\/$/, '');
-export const viewportsDefault = (): number[] => cfg<number[]>('dev.viewports', [1440, 390]);
+// A relative path needs a configured base; the localhost:3000 fallback would check the wrong app.
+export const devUrlSet = (): boolean => !!(process.env.WF_DEV_URL || cfg('dev.url', ''));
+export const NO_DEV_URL = 'set dev.url in .claude/workflow.json or pass a full URL';
+export const viewportsDefault = (): number[] => cfg<number[]>('dev.viewports', [375, 1440]);
 export const shotsDir = (): string => resolve(here, cfg('dev.screenshots', '.workflow/shots'));
 export const absUrl = (u: string, base = devBase()): string => (/^https?:\/\//.test(u) ? u : base + (u.startsWith('/') ? u : `/${u}`));
 export const slug = (u: string): string =>

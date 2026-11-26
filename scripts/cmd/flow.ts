@@ -4,7 +4,7 @@ import { basename, join } from 'node:path';
 import { type FlowOpts, loadFlow, runFlow } from '../pw/flow.ts';
 import { devBase, launchOrExit, out, shotsDir } from '../pw/lib.ts';
 
-const HELP = `wf flow FILE.json [--viewport 390] [--base URL] [--auth STATE_FILE] [--save-state FILE] [--timeout MS] [--json]
+const HELP = `wf flow FILE.json [--viewport 375] [--base URL] [--auth STATE_FILE] [--save-state FILE] [--timeout MS] [--json]
 
 FILE: {"base"?, "viewport"?, "locale"?, "auth"?, "steps": [...]} or a bare steps array.
 Steps (one action each; optional "timeout"):

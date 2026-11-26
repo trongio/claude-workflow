@@ -5,13 +5,13 @@ import { join, relative, resolve } from 'node:path';
 import { readCards } from '../lib.ts';
 import { checkOne, expectedLang, summary } from '../pw/check.ts';
 import { loadFlow, runFlow } from '../pw/flow.ts';
-import { cfg, devBase, here, launchOrExit, main, shotsDir, viewportsDefault } from '../pw/lib.ts';
+import { cfg, devBase, devUrlSet, here, launchOrExit, main, NO_DEV_URL, shotsDir, viewportsDefault } from '../pw/lib.ts';
 
 const HELP = `wf shots ID [PATH...] [--viewports 375,1440] [--locale X] [--base URL]
 
 Takes a full-page screenshot and runs the wf check probes for each path x viewport
-(dev.viewports) in the widest locale (ux.widestLocale), so the verifier and ux-critic only
-judge images. Paths default to the card's "## Surfaces" section. Signs in once with the
+(dev.viewports, default 375,1440) in the widest locale (ux.widestLocale), so the verifier and ux-critic only
+judge images. Relative paths need dev.url or --base. Paths default to the card's "## Surfaces" section. Signs in once with the
 flow file in dev.loginFlow (default .workflow/login.flow.json) when it exists.
 Writes <dev.screenshots>/ID/manifest.json and prints one line per failing shot.
 Exit 1 when a check fails or the login flow fails, 2 on bad usage.`;
@@ -22,6 +22,7 @@ const paths: string[] = [];
 let viewports = viewportsDefault();
 let locale = expectedLang();
 let base = devBase();
+let baseGiven = false;
 try {
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
@@ -34,8 +35,10 @@ try {
             process.exit(0);
         } else if (a === '--viewports') viewports = val().split(',').map(Number);
         else if (a === '--locale') locale = val();
-        else if (a === '--base') base = val().replace(/\/$/, '');
-        else if (a.startsWith('-')) throw new Error(`unknown flag ${a}`);
+        else if (a === '--base') {
+            base = val().replace(/\/$/, '');
+            baseGiven = true;
+        } else if (a.startsWith('-')) throw new Error(`unknown flag ${a}`);
         else if (!id) id = a;
         else paths.push(a);
     }
@@ -63,6 +66,11 @@ if (!paths.length) {
         console.error(`wf shots: card ${id} has no "## Surfaces" paths; pass them: wf shots ${id} /path ...`);
         process.exit(2);
     }
+}
+
+if (!baseGiven && !devUrlSet() && paths.some((p) => !/^https?:\/\//.test(p))) {
+    console.error(`wf shots: ${NO_DEV_URL}`);
+    process.exit(2);
 }
 
 const dir = join(shotsDir(), id);
