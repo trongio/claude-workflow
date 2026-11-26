@@ -28,17 +28,22 @@ $ARGUMENTS
      `ux.widestLocale`: from the README, `.env.example`, seeders, compose
      files, locale folders. Login hints say where dev credentials live, never
      the secret.
-   - `docs.spec`, `docs.standards`, `docs.design`, `risk.high` (migrations,
-     auth, billing, deploy, infra paths), `milestone.label`.
+   - `docs.spec`, `docs.standards`, `docs.design`, `milestone.label`.
    - `worktree.copy`, `worktree.cache`, `worktree.env` (per-worktree DB names
      and ports) and the matching `worktree.teardown` (for example
      `dropdb --if-exists app_{slug}`), so every worktree is runnable and
      leaves nothing behind.
-   - `finish.mode`: `pr` (the default) when the main checkout is served by a
-     dev server, or other Claude sessions or people work in it (check `ps`
-     for other `claude` processes and running dev servers whose cwd is the
-     repo). `merge` only for a solo repo nobody serves from. Keep `push`
-     false unless the owner asks.
+   - `finish.mode` and `push`, asked as one question: `pr` (the default)
+     when the main checkout is served by a dev server, or other Claude
+     sessions or people work in it (check `ps` for other `claude` processes
+     and running dev servers whose cwd is the repo). `pr` needs `push: true`,
+     `gh` and a remote; with `push` false, `wf finish` refuses. `merge` (never
+     pushes) only for a solo repo nobody serves from. Set `push` true only
+     when the owner chooses `pr`.
+   - `risk.high`: leave unset to use `wf risk`'s built-in high patterns
+     (migrations, auth, billing/payment, security, infra/deploy, CI
+     workflows, Dockerfile, `*.sql`), or list the project's own paths;
+     `wf risk --explain` shows what matched.
 4. Hooks: `git config core.hooksPath`. If the repo has hooks in a tracked
    folder (`.husky/`, `.githooks/`, `.claude/hooks/`) and `core.hooksPath`
    does not point there, say so and offer the fix; a reset hooks path silently

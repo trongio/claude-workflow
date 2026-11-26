@@ -21,10 +21,13 @@ haiku). Config: `.claude/workflow.json`.
   gets a line here.
 - The main checkout is shared and may be served: never `checkout`, `stash`,
   `reset` or `switch` there. Work in the task worktree (`wf start`).
+- Landing: `finish.mode` `pr` needs `push: true` and parks the card in
+  `owner-review` until the PR merges, then `wf finish <ID>` again; `merge`
+  and `none` never push. High risk without owner approval parks in every mode.
 - Leave nothing behind: every worktree, DB, port and process you create is
   torn down when the card lands or is abandoned (`wf finish` does it via
-  `worktree.teardown`; `wf prune --apply` for strays, `wf orphans --kill` for
-  servers). `wf doctor` shows what is left.
+  `worktree.teardown`; `wf prune --apply <ID>` for an abandoned card,
+  `wf orphans --kill <ID>` for its servers). `wf doctor` shows what is left.
 - Before clearing a session or stopping work: `wf handoff`, so the next
   session resumes from `.workflow/HANDOFF.md` with nothing lost.
 - Token discipline: `wf rgx`, `wf outline FILE`, `wf doc FILE [section]` and

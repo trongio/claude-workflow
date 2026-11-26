@@ -17,7 +17,14 @@ agent to run one command. Cards change only through `wf`, never by hand-edited
 front matter. Agents: a project agent in `.claude/agents/<name>.md` wins;
 otherwise `workflow:<name>` (planner, reviewer, implementer, researcher,
 verifier, ux-critic, mechanic, scout). Lookups go to `scout`; `mechanic` only
-for multi-step mechanical edits.
+for multi-step mechanical edits. When you spawn any agent and
+`.claude/workflow.json` sets `models.<role>` for it, pass `model: <that value>`
+on the Agent call; otherwise the agent's own frontmatter model applies.
+
+Who does what: you and the implementers run `wf gates`; reviewers never run
+gates (you hand them the fresh table). `wf outcome` writes the record and you
+fill its prose. Every agent cleans up what it started before reporting;
+`wf finish` tears down the task worktree.
 
 Never check out, stash or reset in the main checkout: it is shared with other
 sessions and often served. All work happens in the task worktree.
@@ -46,7 +53,11 @@ Skip the planner when the card's size is in `planner.skipFor` (default `S`):
 write the brief yourself. Otherwise run `planner` (it reads `docs.spec` and
 `docs.standards`), with `researcher` in parallel for unknown APIs. Save the
 plan: `wf plan-save <ID> <file>`. Check the risk: `wf risk` prints
-`high|standard|light <deciding file>`; the planner may raise it, never lower.
+`high|standard|light <deciding file>` (`--explain` names the pattern). Light
+means only `*.md`, `docs/`, `tests/` or `*.css` changed; high means a path in
+`risk.high`, or, when that is unset, a built-in pattern (migrations, auth,
+billing or payment, security, infra or deploy, CI workflows, Dockerfiles,
+`*.sql`); anything else is standard. The planner may raise it, never lower.
 
 ## 3. Mocks (UX-heavy only: new page, redesigned flow, layout-defining)
 
@@ -68,7 +79,7 @@ Streams that add a lint rule or guard go first.
 ## 5. Integrate and gate
 
 Merge each stream branch into the task branch inside the task worktree;
-resolve conflicts. `wf move <ID> code-review`. Then:
+resolve conflicts. Then:
 
 ```bash
 wf gates           # inner loop: changed gates, affected tests only
@@ -79,18 +90,22 @@ back. Never read raw logs whole.
 
 ## 6. Review, verify, critique: in parallel
 
-In ONE message, start all of these (they read the same integrated diff):
+`wf move <ID> code-review`, then in ONE message start all of these (they read
+the same integrated diff):
 
-- `reviewer`: one for standard risk; for high risk, two independent reviewers
-  at once, plus every agent in `review.extraAgents[<risk>]`.
+- `reviewer`: `review.minPasses` rounds (default 1) for standard risk; for
+  high risk, two independent reviewers at once, plus every agent in
+  `review.extraAgents[<risk>]`. Paste the fresh `wf gates` table into each
+  reviewer brief.
 - `verifier`: runs `wf shots <ID>`, `wf check` and `wf flow` against the
   acceptance criteria, browser only for what scripts cannot judge. Skip when
   `ui` is false and there is no runnable surface.
 - `ux-critic`: when the look changed, on the same `wf shots` manifest (it does
   not take its own screenshots unless one is missing).
 
-Light risk: gates plus one verifier spot check of the touched screen (none for
-docs or tests); no reviewer unless `review.minPasses` says otherwise.
+Light risk: the gates plus your own spot check of the diff (`wf review-diff`);
+no reviewer agent and no simplify pass. `review.minPasses` applies to standard
+and high risk only.
 
 ## 7. One merged fix round
 
@@ -102,7 +117,9 @@ fresh `implementer` (a new agent, not the one that wrote the code), then
 
 Re-review only the fix diff (`wf review-diff <commit before the fixes>`), and
 re-verify only what the fixes touched, at every viewport. Repeat until clean or
-`review.maxRounds` (default 3) rounds; UX rounds cap at `ux.maxFixRounds`.
+`review.maxRounds` (default 3) rounds. When the code findings are closed and
+only design fixes remain, `wf move <ID> ux-review`; UX rounds cap at
+`ux.maxFixRounds`.
 Remaining minors become cards: `wf new "<title>" --size S --area <area>`.
 Majors left at the cap: `wf park` with the findings.
 
@@ -123,7 +140,7 @@ wf outcome <ID> --tick <proven acceptance numbers>
 ```
 
 It writes the `## Outcome` skeleton (gate table, diffstat, commits, risk).
-Fill only the prose: what shipped, decisions and deviations with reasons,
+You (the manager, not an agent) fill only the prose: what shipped, decisions and deviations with reasons,
 review, verify and critique results, follow-up card ids. Tick only acceptance
 boxes that a test or an observed verification proved.
 
@@ -131,31 +148,44 @@ boxes that a test or an observed verification proved.
 
 High risk and `review.ownerHoldHigh` (default true), or a card that says the
 owner signs off: `wf park <ID> "owner: <what to decide>"` and stop. The owner
-moves it on.
+moves it on. `wf finish` enforces the same hold in every finish mode: a
+high-risk card without owner approval parks in `owner-review` instead of
+landing.
 
 ## 11. Finish and clean up
 
 ```bash
 wf finish <ID>     # outcome check, cards-commit, land per finish.mode, tracker.onMerge,
-                   # card -> verifying, tear down worktree, branch, DB, ports (worktree.teardown)
+                   # tear down worktree, DB, ports (worktree.teardown)
 wf doctor          # must show no leftovers (worktrees, locks, orphan servers) before you report done
 ```
 
-`finish.mode` is `pr` by default (push the branch, open a PR; the main checkout
-is never touched). Never push when `push` is false. If `wf doctor` lists
-leftovers you created, remove them (`wf orphans --kill`, `wf prune --apply`)
-and run it again.
+Per `finish.mode`:
+- `pr` (default; needs `push: true`, else `wf finish` refuses and says to set
+  `push` or use `merge` or `none`): pushes the branch, opens or updates the
+  PR, tears down the worktree (the branch stays) and parks the card in
+  `owner-review` until the PR merges. After the merge, run `wf finish <ID>`
+  again: it moves the card to `verifying` and deletes the branch. The main
+  checkout is never touched.
+- `merge`: merges into `baseBranch` under the lock, card -> `verifying`. Only
+  when nothing serves from the main checkout. Never pushes.
+- `none`: leaves the branch. Never pushes.
+
+Teardown aborts rather than lose uncommitted work: commit or discard it, then
+rerun. If `wf doctor` lists leftovers you created, remove them
+(`wf orphans --kill <ID>`, `wf prune --apply <ID>`) and run it again; a bare
+`wf orphans --kill` refuses.
 
 A landed card sits in `verifying`, not `done`: merged is not done. When the
 change is observed working where it runs (the deployed app, the device, the
 customer's flow):
 
 ```bash
-wf move <ID> done --verified "<how it was observed>"
+wf move <ID> done --verified "<how it was observed>"   # commits the card itself
 ```
 
 An abandoned or failed card is cleaned up the same way: `wf park` or `wf move`
-it, then `wf prune --apply` and `wf doctor`.
+it, then `wf prune --apply <ID>`, `wf orphans --kill <ID>` and `wf doctor`.
 
 Report in under 15 lines: what shipped, what was decided, what is left, which
 cards wait on the owner, what `wf doctor` showed.

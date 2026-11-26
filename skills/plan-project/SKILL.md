@@ -56,7 +56,7 @@ background, then continue with rounds 2 and 3 while it runs.
 `wf plan stacks --json` lists the stack profiles. Pick the 2-3 families that fit round 1 (for example a
 batteries-included monolith, a single-language TypeScript stack, an API-first service). In ONE message
 launch, all with `run_in_background: true`:
-- one `researcher` per family. Brief: the brief so far (`wf plan get`), the profile's `packages`,
+- one `researcher` per family (2-3 researchers). Brief: the brief so far (`wf plan get`), the profile's `packages`,
   `fits` and `avoid`, and the questions: maturity and maintenance of each core dependency (no alpha or
   beta core deps; flag 0.x), auth/queues/i18n/admin batteries, hosting cost at the stated scale and
   budget, known production gotchas, agent fluency (how well current tooling and models write it). Rule:
@@ -102,15 +102,18 @@ stack). It never overwrites: existing files are kept and the rendered copy lands
 `.workflow/plan/rendered/` for you to merge by hand (`--force` replaces). It prints created and kept.
 UNVERIFIED version rows mean a fetch failed: rerun before continuing.
 
-## 6. Tune (you, prose only)
+## 6. Tune (planner writes, you paste)
 
-Edit only the `<!-- tune: ... -->` blocks, each in place, short and specific to this product:
+Give the `planner` the rendered files, the brief, `options.md` and `design-directions.md`. It returns
+replacement text for each `<!-- tune: ... -->` block (it is read-only); paste each one in place. Every
+block is short and specific to this product:
 - STACK.md decision block (already holds options.md; tighten it), UI-UX "Who and what" and
   "Project-specific UI rules" (the chosen direction from `design-directions.md`), ENGINEERING
   "Definition of done" verification line and "Project-specific rules" (domain invariants, each with an
   enforcer tag), CLAUDE.md conventions.
-Every rule you add names its enforcer (`[hook] [ci: gate] [guard-test] [review] [not yet: X]`). Do not
-touch anything outside the tune blocks; do not add version numbers. Then `wf plan set phase.tuned true`.
+Every rule names its enforcer (`[hook] [ci: gate] [guard-test] [review] [not yet: X]`); `[ci: X]` only
+for a gate that exists in `.claude/workflow.json`, otherwise `[not yet: X]`. Nothing outside the tune
+blocks changes; no version numbers. Then `wf plan set phase.tuned true`.
 
 ## 7. Verify (script)
 
@@ -132,8 +135,10 @@ Run `wf plan cards .workflow/plan/cards.json` (idempotent: re-running keeps exis
 
 ## 9. Hand off
 
-Run `/workflow:init` (config check against the repo, the `## Workflow` section in CLAUDE.md), then
-report in <= 15 lines: stack and UI kit with the one-line reason, assumptions to confirm, pending gates,
+`/workflow:init` can only be started by the owner (it is not model-invocable): ask them to type it, or
+run its steps yourself (`wf init --write`, review `.claude/workflow.json`, append
+`${CLAUDE_PLUGIN_ROOT}/templates/claude-md-section.md` to CLAUDE.md if it has no `## Workflow` section,
+`wf doctor`). Then report in <= 15 lines: stack and UI kit with the one-line reason, assumptions to confirm, pending gates,
 files created and kept, cards created (first IDs), and the next step: `/workflow:next` (or the parked
 STACK decision card when headless). Do not commit unless asked; if asked, `wf cards-commit` for tasks/
 and a normal commit for docs and config.

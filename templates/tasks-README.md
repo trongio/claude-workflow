@@ -43,14 +43,15 @@ results, and follow-up cards.
 | backlog | wanted, not scheduled | owner or manager |
 | todo | scheduled, ready to pick up | owner or manager |
 | in-progress | planner + implementers working | `wf start` |
-| code-review | gates, reviewers, verifier, critic | manager after integrate |
-| ux-review | UX fix round in flight | manager |
-| owner-review | needs the owner: a choice, a sign-off | `wf park` |
-| verifying | landed (merged or PR open), not yet observed working where it runs | `wf finish` |
+| code-review | gates, then reviewers, verifier and critic in parallel, then the merged fix round | manager, when the parallel review starts |
+| ux-review | only design fixes remain (the UX fix round) | manager, when code findings are closed |
+| owner-review | needs the owner: a choice, a sign-off, a high-risk hold, or a PR waiting to merge | `wf park`, or `wf finish` in `pr` mode |
+| verifying | landed (merged), not yet observed working where it runs | `wf finish` (in `pr` mode: the second run, after the PR merged) |
 | done | observed working; `--verified` says how | `wf move <ID> done --verified "..."` |
 
 Only the owner moves a card out of `owner-review`, unless the card says the
-manager may finish it alone. A `blocked` value starting with `owner` lists the
+manager may finish it alone. A card parked by `wf finish` in `pr` mode leaves
+it when `wf finish <ID>` runs again after the PR merged. A `blocked` value starting with `owner` lists the
 card under "waiting on owner".
 
 ## ETA
