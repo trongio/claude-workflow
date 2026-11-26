@@ -57,6 +57,20 @@ export const DAY = 864e5;
 // worktree and the board see one board. WF_ROOT overrides.
 function findRoot(): string {
     if (process.env.WF_ROOT) return process.env.WF_ROOT.replace(/\/?$/, '/');
+    // Fast path without spawning git: walk up to .git; a worktree's .git file names the main one.
+    for (let d = process.cwd(); d !== '/'; d = d.slice(0, d.lastIndexOf('/')) || '/') {
+        let st: ReturnType<typeof statSync> | undefined;
+        try {
+            st = statSync(`${d}/.git`);
+        } catch {
+            continue;
+        }
+        if (st.isDirectory()) return `${d}/`;
+        const gitdir = readFileSync(`${d}/.git`, 'utf8').match(/^gitdir: (.*)$/m)?.[1]?.trim() ?? '';
+        const main = gitdir.match(/^(\/.*)\/\.git\/worktrees\/[^/]+$/)?.[1];
+        if (main) return `${main}/`;
+        break;
+    }
     const r = Bun.spawnSync(['git', 'rev-parse', '--path-format=absolute', '--git-common-dir'], { stderr: 'ignore' });
     const common = r.success ? r.stdout.toString().trim() : '';
     if (common.endsWith('/.git')) return common.slice(0, -4);
@@ -157,9 +171,18 @@ export function parseCard(text: string, file: string, withBody = true): Card | n
     };
 }
 
-// One readdir per folder. Archived bodies are parsed only when `bodies` is set.
-export function readCards(opts: { bodies?: boolean } = {}): Card[] {
+// A done card known only from its archive file name: enough for ids, counts and dependencies.
+const stub = (name: string, file: string): Card => ({
+    id: name.match(/^[A-Za-z][A-Za-z0-9]*-\d+/)?.[0] ?? name, title: '', status: 'done', size: 'M', points: POINTS.M, area: '', priority: 2,
+    milestone: false, blocked: '', depends: [], links: [], tags: [], acceptance: { done: 0, total: 0 }, body: '', file,
+});
+
+// One readdir per folder. Open cards are parsed in full. Archived cards (all done) are
+// read per `archive`: 'stub' (default) reads no file, only the id from the name; 'meta'
+// the front matter; 'body' everything.
+export function readCards(opts: { archive?: 'stub' | 'meta' | 'body' } = {}): Card[] {
     const cards: Card[] = [];
+    const archive = opts.archive ?? 'stub';
     for (const dir of ['tasks', 'tasks/archive']) {
         const path = `${root}${dir}`;
         let names: string[];
@@ -168,9 +191,13 @@ export function readCards(opts: { bodies?: boolean } = {}): Card[] {
         } catch {
             continue;
         }
-        const withBody = dir === 'tasks' || opts.bodies === true;
+        const withBody = dir === 'tasks' || archive === 'body';
         for (const name of names) {
             if (!CARD_FILE.test(name)) continue;
+            if (dir !== 'tasks' && archive === 'stub') {
+                cards.push(stub(name, `${dir}/${name}`));
+                continue;
+            }
             try {
                 const card = parseCard(readFileSync(`${path}/${name}`, 'utf8'), `${dir}/${name}`, withBody);
                 if (card) cards.push(card);
@@ -474,7 +501,7 @@ if git show-ref --verify --quiet "refs/heads/$3"; then git branch -D "$3" >/dev/
 
 // Resource ledger written by stream 2: card ids holding a db, port or preview.
 export function ledgerCards(): string[] {
-    const common = git(['rev-parse', '--path-format=absolute', '--git-common-dir']).out;
+    const common = existsSync(`${root}.git/HEAD`) ? `${root}.git` : git(['rev-parse', '--path-format=absolute', '--git-common-dir']).out;
     const json = readJson(`${common}/workflow-resources.json`);
     if (!json || typeof json !== 'object') return [];
     const ids = (list: Record<string, unknown>[]) => [...new Set(list.map((e) => String(e.card ?? e.id ?? '')).filter(Boolean))];

@@ -9,7 +9,7 @@ Writes a snapshot a fresh session can resume from to .workflow/HANDOFF.md in the
 main checkout and prints 5 summary lines.`;
 
 parseArgs(process.argv.slice(2), {}, HELP);
-const cards = readCards({ bodies: true });
+const cards = readCards({ archive: 'body' });
 const base = baseBranch();
 const branch = git(['branch', '--show-current']).out || `(detached ${git(['rev-parse', '--short', 'HEAD']).out})`;
 const inFlight = cards.filter((t) => ACTIVE.includes(t.status));

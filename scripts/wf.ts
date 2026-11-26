@@ -41,7 +41,9 @@ const warnDepends = (cards: Card[], t: { id: string; depends: string[] }) => {
 
 const needsTasksDir = !['board', 'root'].includes(cmd);
 if (needsTasksDir && !existsSync(`${root}tasks`)) fail(`no tasks/ folder in ${root}; run /workflow:init first`);
-const cards = needsTasksDir ? readCards() : [];
+// Archived cards are read only where their details show; claim and new re-read under the lock.
+const archive = cmd === 'stats' || (cmd === 'list' && args[0] === 'done') ? 'meta' : 'stub';
+const cards = needsTasksDir && !['claim', 'new'].includes(cmd) ? readCards({ archive }) : [];
 
 const seen = new Map<string, string>();
 for (const t of cards) {

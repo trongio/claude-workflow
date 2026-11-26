@@ -22,7 +22,7 @@ function state() {
         title: config.board?.title ?? `${basename(root.replace(/\/$/, ''))} board`,
         milestoneLabel: milestoneLabel(),
         branch: git(['branch', '--show-current']),
-        tasks: readCards({ bodies: true }),
+        tasks: readCards({ archive: 'body' }),
         commits,
     };
 }
