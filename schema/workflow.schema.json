@@ -102,6 +102,13 @@
             "default": 900,
             "description": "Seconds before the gate is killed and reported TIMEOUT (red)."
           },
+          "requires": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tools this gate needs; wf doctor checks them (otherwise it derives the tool from cmd)."
+          },
           "pending": {
             "type": "boolean",
             "default": false,
@@ -166,6 +173,11 @@
             "type": "string"
           },
           "description": "Files copied once when missing, e.g. .env."
+        },
+        "setupTimeout": {
+          "type": "integer",
+          "default": 900,
+          "description": "Seconds each setup and install command may run before its process group is killed."
         },
         "setup": {
           "type": "array",

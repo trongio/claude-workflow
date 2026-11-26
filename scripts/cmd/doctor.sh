@@ -3,8 +3,9 @@
 #
 # Usage: wf doctor [--strict]
 # Checks: workflow.json against the schema (types and enums of top-level keys
-# and their direct properties, unknown keys); every gate's first command word
-# exists (a pending gate names its missing tool); core.hooksPath (worktrees
+# and their direct properties, unknown keys); every gate's tools exist (its
+# `requires` list, else the tool derived from cmd past wrappers such as npx,
+# `!`, test, ./vendor/bin; a pending gate says whether they are installed now); core.hooksPath (worktrees
 # match main, a hooks dir is wired); dev.url answers (a WARN: the app may not
 # be running yet; FAIL with --strict); stale locks; leftovers (merged or done
 # worktrees, ledger entries without a live worktree, merged wf/* branches,
@@ -50,6 +51,53 @@ warn() {
 }
 check() { checks=$((checks + 1)); }
 
+# gate_tool CMD: the tool a gate command runs, past wrappers: env assignments,
+# `!`, env, npx, bunx, `bun x`, `pnpm exec`, yarn [run|exec]; `test`/`[` take
+# the first command substitution's tool (none without one). ./vendor/bin/X
+# and node_modules/.bin/X stay paths; tool_name shows them as X.
+gate_tool() {
+    local cmd="$1" w i=0 words=()
+    read -ra words <<<"$cmd"
+    while [ "$i" -lt "${#words[@]}" ]; do
+        w="${words[$i]}"
+        i=$((i + 1))
+        case "$w" in
+        [A-Za-z_]*=* | '!' | env | npx | bunx | -*) continue ;;
+        yarn)
+            case "${words[$i]:-}" in run | exec) i=$((i + 1)) ;; esac
+            continue
+            ;;
+        bun | pnpm)
+            if [ "$w/${words[$i]:-}" = bun/x ] || [ "$w/${words[$i]:-}" = pnpm/exec ]; then
+                i=$((i + 1))
+                continue
+            fi
+            ;;
+        test | '[')
+            case "$cmd" in *\$\(*) gate_tool "${cmd#*\$(}" ;; esac
+            return 0
+            ;;
+        esac
+        w="${w#./}"
+        w="${w%%[\)\"\';]*}"
+        [ -n "$w" ] && printf '%s\n' "$w"
+        return 0
+    done
+}
+tool_name() {
+    case "$1" in vendor/bin/* | */vendor/bin/* | node_modules/.bin/* | */node_modules/.bin/*) printf '%s\n' "${1##*/}" ;; *) printf '%s\n' "$1" ;; esac
+}
+# tool_ok CWD TOOL: a path is executable, or a name is on PATH or in the gate
+# cwd's node_modules/.bin or vendor/bin.
+tool_ok() {
+    local d="$root/$1" t="$2"
+    if [[ "$t" == */* ]]; then
+        [ -x "$d/$t" ] || [ -x "$t" ]
+        return
+    fi
+    (cd "$d" 2>/dev/null && command -v "$t" >/dev/null) || [ -x "$d/node_modules/.bin/$t" ] || [ -x "$d/vendor/bin/$t" ]
+}
+
 # The slow independent checks start now and are read at the end.
 bg="$(mktemp -d "${TMPDIR:-/tmp}/doctor.XXXXXX")"
 trap 'rm -rf "$bg"' EXIT
@@ -93,29 +141,26 @@ else
                 else empty end)
           end' "$cfg")
 
-    # 2. Gate tools.
-    while IFS=$'\t' read -r name cwd pending cmd; do
+    # 2. Gate tools: `requires` when set, else the tool derived from cmd.
+    while IFS=$'\x1f' read -r name cwd pending reqs cmd; do
         check
-        word="$(printf '%s\n' "$cmd" | awk '{ for (i = 1; i <= NF; i++) if ($i !~ /^[A-Za-z_][A-Za-z0-9_]*=/) { print $i; exit } }')"
+        if [ -n "$reqs" ]; then read -ra tools <<<"$reqs"; else mapfile -t tools < <(gate_tool "$cmd"); fi
+        missing=()
+        for t in "${tools[@]}"; do tool_ok "$cwd" "$t" || missing+=("$(tool_name "$t")"); done
+        names="$(for t in "${tools[@]}"; do tool_name "$t"; done | paste -sd' ' -)"
         if [ "$pending" = true ]; then
-            if [ -z "$word" ]; then
+            if [ "${#tools[@]}" = 0 ]; then
                 echo "pending gate $name: not proven until its tool is set up"
-            elif [[ "$word" == */* ]] && [ ! -x "$root/$cwd/$word" ]; then
-                echo "pending gate $name: $word not found (cwd $cwd)"
-            elif [[ "$word" != */* ]] && ! (cd "$root/$cwd" 2>/dev/null && command -v "$word" >/dev/null); then
-                echo "pending gate $name: $word not on PATH"
+            elif [ "${#missing[@]}" -gt 0 ]; then
+                echo "pending gate $name: ${missing[*]} not installed (cwd $cwd)"
             else
-                echo "pending gate $name: $word is installed now; set pending false"
+                echo "pending gate $name: $names installed now; set pending false"
             fi
             continue
         fi
-        [ -n "$word" ] || continue
-        if [[ "$word" == */* ]]; then
-            [ -x "$root/$cwd/$word" ] || [ -x "$word" ] || bad "gate $name: $word not found (cwd $cwd)"
-        else
-            (cd "$root/$cwd" 2>/dev/null && command -v "$word" >/dev/null) || bad "gate $name: $word is not installed"
-        fi
-    done < <(jq -r '.gates // [] | .[] | [.name, (.cwd // "."), (.pending // false | tostring), .cmd] | @tsv' "$cfg")
+        for t in "${missing[@]}"; do bad "gate $name: $t is not installed (cwd $cwd)"; done
+    done < <(jq -r '.gates // [] | .[] | [.name, (.cwd // "."), (.pending // false | tostring),
+        ((.requires // []) | join(" ")), (.cmd | gsub("\n"; " "))] | join("\u001f")' "$cfg")
 fi
 
 # Landing config: pr mode pushes, so it needs push: true.
