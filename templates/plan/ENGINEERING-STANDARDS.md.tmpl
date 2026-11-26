@@ -33,7 +33,7 @@ code quality > speed of delivery.
 Merged is not done. A card moves `in-progress -> code-review -> (ux-review) -> verifying -> done`.
 
 - **Done** means: the acceptance criteria are met in the running app (or the real device), and the card's
-  `## Outcome` says how each one was verified: the command, URL, viewport, locale, account, or hardware
+  `## Outcome` says how each one was verified: the command, URL, {{#if ui}}viewport, {{/if}}locale, account, or hardware
   used, and what was observed. "Tests pass" alone verifies only what the tests assert. [review]
 - **Verifying** is the state between landing and done. A card sits there until someone (an agent with the
   verifier role, or the owner) has exercised the change outside the test suite. [review]
@@ -43,8 +43,15 @@ Merged is not done. A card moves `in-progress -> code-review -> (ux-review) -> v
 - Anything left undone is a new card linked from the Outcome, not a sentence in a summary. [review]
 - Docs that the change makes wrong are fixed in the same change (README, this file, CATALOG.md, API docs). [review]
 <!-- tune: what "verified" means for this product (e.g. a physical device run, a payment sandbox, a staging deploy) -->
+{{#if ui}}
 - Verification for this project: run the change in the local dev app at {{DEV_URL}}, in the widest locale
   (`{{WIDEST_LOCALE}}`), at 375 px and 1440 px, as a user with the least permissions that should succeed and one that should be refused.
+{{/if}}
+{{#unless ui}}
+- Verification for this project: call the change on the local dev server at {{DEV_URL}} as a caller with the
+  least permissions that should succeed and one that should be refused, and check the response and the
+  stored state.
+{{/unless}}
 <!-- /tune -->
 
 ## 2. Types and static analysis
@@ -101,8 +108,13 @@ Merged is not done. A card moves `in-progress -> code-review -> (ux-review) -> v
   that will drift. Replace the copy with the import. [review] [not yet: a grep gate for those phrases]
 - Fixing one surface and not its twin is the same bug: search for every caller of the derivation before
   closing the card. [review]
-- Copy-paste detection runs on every change; a new duplicated chunk fails the gate (the baseline only
-  shrinks). [ci: dupes] (a stack with no `dupes` gate: [not yet: copy-paste gate])
+{{#if dupes}}
+- Copy-paste detection runs before every merge (release gate); a new duplicated chunk fails it (the
+  baseline only shrinks). [ci: dupes]
+{{/if}}
+{{#unless dupes}}
+- A new duplicated chunk is a finding: extract it. [review] [not yet: copy-paste gate]
+{{/unless}}
 - **Size budget:** a class or module over ~300 lines, or a function over ~50, needs a reason in review;
   split by responsibility, not by line count. [review] [not yet: a size-report gate]
 - Reuse first: before adding a helper, component, endpoint or status formula, search for the existing one
@@ -146,14 +158,20 @@ Merged is not done. A card moves `in-progress -> code-review -> (ux-review) -> v
 ## 7. Internationalization
 
 {{#if i18n}}
-Locales: {{LOCALES}}. Widest: `{{WIDEST_LOCALE}}` (every visual check runs in it).
+Locales: {{LOCALES}}. Widest: `{{WIDEST_LOCALE}}`{{#if ui}} (every visual check runs in it){{/if}}.
 {{/if}}
 {{#unless i18n}}
 Locales: {{LOCALES}}. One locale today, but every string is a key from day one, so adding a language is
 data, not a rewrite.
 {{/unless}}
+{{#if ui}}
 - **Keys only.** No literal user-facing strings in code or templates. That includes `aria-label`, `title`,
   `alt`, `placeholder` and `sr-only` text, emails, PDF exports, and validation messages. [not yet: i18n check]
+{{/if}}
+{{#unless ui}}
+- **Keys only.** No literal user-facing strings in code: API error and status messages, emails, PDF
+  exports and validation messages are keys. [not yet: i18n check]
+{{/unless}}
 - **An enum is not a label.** A payload or audit entry never carries a raw enum as display text; send a
   key and let the reader resolve it. [review]
 - **Plurals use ICU MessageFormat** (`{count, plural, one {...} other {...}}`), which knows every locale's
@@ -162,7 +180,9 @@ data, not a rewrite.
   `needs-translation` marker that a gate reports. [guard-test]
 - Instants stay machine-readable in payloads and audit entries; they are formatted at render time in the
   reader's zone and locale. [review]
+{{#if ui}}
 - The destructive verb is lexically distinct from the dismiss verb in every locale (see UI/UX standards). [review]
+{{/if}}
 
 ## 8. Review
 

@@ -30,7 +30,7 @@ Stack: {{STACK_TITLE}} (decision and pinned versions in `docs/STACK.md`). UI kit
 
 - Strict types and the full gate set from day one; ratchets only shrink.
 - Authorization on every state-changing route, proven by a test on that route.
-- i18n keys only (including `aria-label`, `title`, `alt`, `sr-only`); locales: {{LOCALES}}.
+- i18n keys only{{#if ui}} (including `aria-label`, `title`, `alt`, `sr-only`){{/if}}; locales: {{LOCALES}}.
 {{#if multiTenant}}
 - Tenant-scope every query: application scope plus database row-level security, both tested.
 {{/if}}

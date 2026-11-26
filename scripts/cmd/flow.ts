@@ -71,5 +71,5 @@ const ok = await runFlow(browser, flow, o, (r) => {
     }
 });
 await browser.close();
-if (!json) console.log(ok ? `flow ok: ${flow.steps.length} steps` : 'flow failed');
+if (!json) console.log(ok ? `flow ok: ${flow.steps.length} ${flow.steps.length === 1 ? 'step' : 'steps'}` : 'flow failed');
 process.exit(ok ? 0 : 1);

@@ -51,6 +51,16 @@ refuse() {
     fi
     ok "$label"
 }
+exits() { # exits CODE LABEL CMD...: CMD must exit with CODE.
+    local want="$1" label="$2" rc=0
+    shift 2
+    "$@" >"$dir.out" 2>&1 || rc=$?
+    [ "$rc" = "$want" ] || {
+        cat "$dir.out" >&2
+        die "$label (exit $rc, want $want)"
+    }
+    ok "$label"
+}
 field() { # field ID KEY: a front matter value, from tasks/ or tasks/archive/
     local f
     for f in "$dir"/tasks/"$1"-*.md "$dir"/tasks/archive/"$1"-*.md; do
@@ -250,7 +260,7 @@ grep -q 'no acceptance criteria on the card: add - \[ \] items or pass --force' 
 mkdir -p "$dir/.workflow/worktrees/T-5/db"
 commit_in "$dir/.workflow/worktrees/T-5" db/m.sql
 "$wf" outcome T-5 --tick 1 >/dev/null && write_prose T-5
-expect "finish high risk (mode merge)" "$wf" finish T-5 --mode merge
+exits 4 "finish high risk (mode merge) exits 4" "$wf" finish T-5 --mode merge
 [ "$(field T-5 status)" = owner-review ] && grep -q 'high risk (db/m.sql)' "$dir.out" && [ ! -f db/m.sql ] && ok "high risk parked in owner-review, not merged" || die "owner hold: $(cat "$dir.out")"
 refuse "move --approve is gone" "$wf" move T-5 owner-review --approve
 grep -q 'wf approve T-5' "$dir.out" && ok "move --approve points at wf approve" || die "move --approve: $(cat "$dir.out")"
@@ -262,7 +272,7 @@ tip5="$(git rev-parse wf/T-5)"
     ok "approve binds the tip sha, clears blocked, restores in-progress" || die "approve fields: $(sed -n '1,20p' tasks/T-5-*.md)"
 "$wf" status | grep -q 'waiting on owner' && die "approved card still waiting on owner: $("$wf" status)" || ok "approved card leaves waiting on owner"
 commit_in "$dir/.workflow/worktrees/T-5" db/later.sql
-expect "finish after a commit past the approval" "$wf" finish T-5 --mode merge
+exits 4 "finish after a commit past the approval" "$wf" finish T-5 --mode merge
 [ "$(field T-5 status)" = owner-review ] && grep -q "approved ${tip5:0:7}, the branch is now at" "$dir.out" && [ ! -f db/m.sql ] &&
     ok "a commit after approval re-holds" || die "re-hold: $(cat "$dir.out")"
 expect "wf approve again" "$wf" approve T-5
@@ -428,7 +438,7 @@ refuse "finish refuses a dirty worktree" "$wf" finish "$id" --mode merge
 grep -q 'has uncommitted work' "$dir.out" && grep -q '^  untracked.txt$' "$dir.out" && grep -q '^  dirty1.txt$' "$dir.out" && [ ! -f dirty1.txt ] && [ "$(field "$id" status)" = in-progress ] &&
     ok "dirty refusal lists the paths, nothing merged, card stays" || die "dirty refusal: $(cat "$dir.out")"
 expect "finish --force on a dirty worktree" "$wf" finish "$id" --mode merge --force
-grep -q 'committed 2 uncommitted path(s) as a wip commit' "$dir.out" && [ -f untracked.txt ] && [ "$(field "$id" status)" = verifying ] &&
+grep -q 'committed 2 uncommitted paths as a wip commit' "$dir.out" && [ -f untracked.txt ] && [ "$(field "$id" status)" = verifying ] &&
     ok "--force commits the dirty work as wip, then lands it" || die "dirty --force: $(cat "$dir.out")"
 
 # Red release gates never land, in any mode; a green run for an older commit is not reused.
@@ -504,5 +514,105 @@ expect "approve the parked card" "$wf" approve "$id"
 git worktree remove --force "$dir/.workflow/worktrees/$id"
 "$wf" status | grep -q "worktree gone: $id (worktree gone: wf start $id to resume or wf move $id backlog)" && ok "status hints at a lost worktree" || die "status gone: $("$wf" status)"
 "$wf" show "$id" 2>&1 >/dev/null | grep -q "hint: worktree gone: wf start $id to resume" && ok "show hints at a lost worktree" || die "show gone hint"
+
+# ---------------------------------------------------------------- fix round 3: finish exit codes and landing safety
+# Moving a file out of a high-risk path is high risk: both rename paths count.
+id="$(newcard "Rename out")"
+"$wf" start "$id" >/dev/null
+wtn="$dir/.workflow/worktrees/$id"
+git -C "$wtn" mv db/m.sql moved-out.txt && git -C "$wtn" commit -qm "refactor: move the migration"
+"$wf" outcome "$id" --tick 1 >/dev/null && write_prose "$id"
+exits 4 "finish a rename out of risk.high exits 4" "$wf" finish "$id" --mode merge
+[ "$(field "$id" status)" = owner-review ] && grep -q 'high risk (db/m.sql)' "$dir.out" && [ -f db/m.sql ] && ok "rename out of db/ parks for the owner, nothing merged" || die "rename hold: $(cat "$dir.out")"
+"$wf" move "$id" backlog >/dev/null
+
+# A release run on a dirty tree proves no commit: finish runs the gates again.
+set_config ".gates = [{\"name\": \"ok\", \"cmd\": \"touch $dir.gates-ran\", \"when\": [\"*\"]}]"
+id="$(newcard "Dirty proof")"
+ready "$id" proof.txt
+wtd="$dir/.workflow/worktrees/$id"
+echo scratch >"$wtd/scratch.txt"
+(cd "$wtd" && "$wf" gates --release >/dev/null 2>&1) || true
+jq -e --arg sha "$(git rev-parse "wf/$id")" '.dirty == true and .sha == $sha' "$wtd/.workflow/gates-last.json" >/dev/null || die "gates did not record a dirty run: $(cat "$wtd/.workflow/gates-last.json")"
+rm -f "$wtd/scratch.txt" "$dir.gates-ran"
+expect "finish after a dirty-tree release run" "$wf" finish "$id" --mode merge
+[ -e "$dir.gates-ran" ] && [ "$(field "$id" status)" = verifying ] && ok "a dirty-tree release run is not reused: the gates ran again" || die "dirty proof reused: $(cat "$dir.out")"
+
+# A commit made after the gates checked the tip is never merged: wt-merge --sha refuses.
+set_config '.gates = [{"name": "late", "cmd": "git commit -q --allow-empty -m late-commit", "when": ["*"]}]'
+id="$(newcard "Late commit")"
+ready "$id" gated.txt
+gated="$(git rev-parse "wf/$id")"
+exits 2 "finish refuses when the tip moved after the gates" "$wf" finish "$id" --mode merge
+[ "$(git rev-parse "wf/$id")" != "$gated" ] && [ ! -f gated.txt ] && grep -q "not the gated $gated" "$dir.out" && [ "$(field "$id" status)" = in-progress ] &&
+    ok "tip mismatch: nothing merged, card stays" || die "tip mismatch: $(cat "$dir.out")"
+set_config '.gates = [{"name": "ok", "cmd": "true", "when": ["*"]}]'
+"$wf" move "$id" backlog >/dev/null
+
+# --force commits only in the task worktree; a branch checked out elsewhere is refused when dirty.
+id="$(newcard "Elsewhere")"
+git worktree add -q -b "wf/$id" "$dir.elsewhere" main
+commit_in "$dir.elsewhere" elsewhere.txt
+"$wf" outcome "$id" --tick 1 >/dev/null && write_prose "$id"
+echo wip >"$dir.elsewhere/stray.txt"
+exits 2 "finish --force in a foreign worktree exits 2" "$wf" finish "$id" --mode merge --force
+grep -q 'is not the task worktree, so --force never commits there' "$dir.out" && [ -n "$(git -C "$dir.elsewhere" status --porcelain)" ] && [ ! -f elsewhere.txt ] &&
+    ok "foreign worktree: dirty work refused, not committed, not merged" || die "foreign --force: $(cat "$dir.out")"
+git worktree remove --force "$dir.elsewhere"
+"$wf" move "$id" backlog >/dev/null
+
+# Headless sessions never force a landing.
+id="$(newcard "Headless")"
+ready "$id" headless.txt
+before="$(snapshot)"
+exits 2 "WF_HEADLESS=1 finish --force exits 2" env WF_HEADLESS=1 "$wf" finish "$id" --mode merge --force
+grep -q 'refused headless' "$dir.out" && [ "$(snapshot)" = "$before" ] && ok "headless --force changes nothing" || die "headless force: $(cat "$dir.out")"
+expect "headless finish without --force lands through wt-merge" env WF_HEADLESS=1 "$wf" finish "$id" --mode merge
+[ -f headless.txt ] && [ "$(field "$id" status)" = verifying ] && ok "headless finish passes WF_FROM_FINISH to wt-merge" || die "headless merge: $(cat "$dir.out")"
+
+# pr mode with no gh binary: one clear line, exit 2, no stack trace.
+nogh="$dir.nogh"
+mkdir -p "$nogh"
+IFS=: read -ra path_dirs <<<"$PATH"
+for d in "${path_dirs[@]}"; do
+    for f in "$d"/*; do
+        n="${f##*/}"
+        [ "$n" = gh ] || [ -e "$nogh/$n" ] || [ ! -x "$f" ] || ln -s "$f" "$nogh/$n"
+    done
+done
+set_config '.push = true'
+id="$(newcard "No gh")"
+ready "$id" nogh.txt
+exits 2 "pr mode without gh exits 2" env PATH="$nogh" "$wf" finish "$id" --mode pr
+grep -qx 'gh not found: install GitHub CLI or use finish.mode merge|none' "$dir.out" && ! grep -q '^ *at ' "$dir.out" && [ -z "$(git ls-remote origin "refs/heads/wf/$id")" ] &&
+    ok "missing gh: one line, nothing pushed" || die "missing gh: $(cat "$dir.out")"
+set_config '.push = false'
+"$wf" move "$id" backlog >/dev/null
+
+# A conflict names the files and gives one next step, exit 3.
+a="$(newcard "Side A")"
+b="$(newcard "Side B")"
+ready "$a" both.txt
+ready "$b" both.txt
+echo b >"$dir/.workflow/worktrees/$b/both.txt" && git -C "$dir/.workflow/worktrees/$b" commit -qam "feat: b side"
+expect "finish side A" "$wf" finish "$a" --mode merge
+exits 3 "finish side B conflicts with exit 3" "$wf" finish "$b" --mode merge
+grep -q 'merge conflict in: both.txt$' "$dir.out" && grep -q "next: rebase the task branch onto main in its worktree, resolve, commit, then wf finish $b" "$dir.out" &&
+    ! grep -q '>>>>>>>' "$dir.out" && [ "$(field "$b" status)" = in-progress ] && ok "conflict: file list and one next step" || die "conflict message: $(cat "$dir.out")"
+"$wf" move "$b" backlog >/dev/null
+
+# No net change against the base: exit 5, the base untouched.
+id="$(newcard "No-op")"
+ready "$id" noop.txt
+git -C "$dir/.workflow/worktrees/$id" rm -q noop.txt && git -C "$dir/.workflow/worktrees/$id" commit -qm "revert: noop"
+head="$(git rev-parse main)"
+exits 5 "finish with no net change exits 5" "$wf" finish "$id" --mode merge
+grep -q "nothing to land: the branch has no changes against main; wf move $id done --verified or backlog" "$dir.out" && [ "$(git log -1 --format=%s main)" != "No-op ($id)" ] &&
+    ok "nothing to land: message, no merge commit" || die "nothing to land: $(cat "$dir.out") $head"
+
+# The help documents every exit code.
+"$wf" finish --help >"$dir.out"
+for c in 0 2 3 4 5; do grep -q "^  $c  " "$dir.out" || die "finish --help lacks exit $c"; done
+ok "finish --help documents exit codes 0 2 3 4 5"
 
 echo "cards.sh: $pass passed ($dir)"

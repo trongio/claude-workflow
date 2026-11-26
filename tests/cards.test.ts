@@ -181,7 +181,7 @@ describe('risk', () => {
 
 describe('gates', () => {
     const sha = 'a'.repeat(40);
-    const run = (results: object[], extra: object = {}) => ({ sha, release: true, results, ...extra });
+    const run = (results: object[], extra: object = {}) => ({ sha, release: true, dirty: false, results, ...extra });
     test('release green: every gate passed at that commit', () => {
         expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }, { name: 'test', status: 'cached' }]), sha).green).toBe(true);
     });
@@ -197,6 +197,19 @@ describe('gates', () => {
         expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }], { release: false }), sha).green).toBe(false);
         expect(lib.releaseVerdict(run([{ name: 'e2e', status: 'SKIP', reason: 'not in release' }]), sha).green).toBe(false);
         expect(lib.releaseVerdict(undefined, sha).green).toBe(false);
+    });
+    test('a dirty-tree run, or one that does not record the tree state, proves no commit', () => {
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }], { dirty: true }), sha)).toEqual({ green: false, why: 'last gate run was on a dirty tree' });
+        const { dirty: _, ...legacy } = run([{ name: 'lint', status: 'PASS' }]);
+        expect(lib.releaseVerdict(legacy, sha).green).toBe(false);
+    });
+});
+
+describe('plural', () => {
+    test('one is singular, anything else plural', () => {
+        expect(lib.plural(1, 'file')).toBe('1 file');
+        expect(lib.plural(0, 'file')).toBe('0 files');
+        expect(lib.plural(2, 'fix commit')).toBe('2 fix commits');
     });
 });
 

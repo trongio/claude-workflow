@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { baseBranch, detect, haveCmd, missingTools, type Detection } from './detect.ts';
 import { table, versions } from './versions.ts';
-import { headerHelp, idPrefix, prefixFrom, readCards, root as mainRoot, today } from '../lib.ts';
+import { headerHelp, idPrefix, plural, prefixFrom, readCards, root as mainRoot, today } from '../lib.ts';
 
 const PLUGIN = join(dirname(import.meta.path), '../..');
 const T = (p: string) => join(PLUGIN, 'templates', p);
@@ -229,6 +229,8 @@ function vars(b: Brief, stack: Stack, uiId: string, versionTable: string, gates:
     };
 }
 
+const PALETTE = '(?:bg|text|border|ring|outline|fill|stroke|from|via|to|divide|shadow|decoration|accent|caret|placeholder)-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-[0-9]{2,3}\\b';
+
 function stackGates(stack: Stack, uiId: string): StackGate[] {
     return stack.gates
         .filter((g) => !(uiId === 'native' && g.name === 'tokens'))
@@ -236,7 +238,8 @@ function stackGates(stack: Stack, uiId: string): StackGate[] {
             let cmd = g.cmd;
             // Plain CSS has no utility scale, so raw px values in component CSS are magic numbers too.
             if (g.name === 'tokens' && uiId === 'plain-css') cmd = cmd.replace(/style=\\x22'/, "style=\\x22|(?<![\\w.-])[1-9][0-9]*(?:\\.[0-9]+)?px\\b'");
-            const { requires, ...rest } = g;
+            // Tailwind palette utilities (bg-red-500) bypass the semantic theme tokens.
+            if (g.name === 'tokens' && uiId === 'shadcn-tailwind') cmd = cmd.replace(/style=\\x22'/, `style=\\x22|(?<![\\w-])${PALETTE}'`);
             // A `<tool>.config.*` glob only means something when the gate runs that tool or the stack
             // ships it (vitest reads vite.config.*; next build does not, and Next ships no vite).
             const when = g.when.filter((w) => {
@@ -244,7 +247,8 @@ function stackGates(stack: Stack, uiId: string): StackGate[] {
                 const name = (p: string) => p.split(':').pop()?.split('/').pop() ?? '';
                 return !tool || g.cmd.includes(tool) || stack.packages.some((p) => name(p) === tool || name(p).startsWith(`${tool}-`));
             });
-            return { ...rest, cmd, when, ...(missing(g) ? { pending: true } : {}) } as StackGate;
+            // `requires` stays on the gate: wf doctor and wf plan unpend read it from the config.
+            return { ...g, cmd, when, ...(missing(g) ? { pending: true } : {}) } as StackGate;
         });
 }
 
@@ -289,6 +293,8 @@ async function scaffold(): Promise<void> {
         versionTable = table(rows);
     }
     const gates = stackGates(stack, uiId);
+    // Docs promise a copy-paste gate only where the stack has one.
+    fl.dupes = gates.some((g) => g.name === 'dupes');
     const v = vars(b, stack, uiId, versionTable, gates);
     const outputs: [string, string][] = [
         ['docs/STACK.md', render(readFileSync(T('plan/STACK.md.tmpl'), 'utf8'), v, fl)],
@@ -403,7 +409,7 @@ function status(): void {
     const phases: [string, boolean, string][] = [
         ['detect', existsSync(join(PLAN, 'detect.json')), 'wf detect --save'],
         ['interview', answered === all.length, `${answered}/${all.length} answered; wf plan questions`],
-        ['research', research.length >= 2, `${research.length} notes in .workflow/plan/research/`],
+        ['research', research.length >= 2, `${plural(research.length, 'note')} in .workflow/plan/research/`],
         ['decide', existsSync(join(PLAN, 'options.md')), '.workflow/plan/options.md'],
         ['scaffold', !!b.answers['decision.stack'] && existsSync(join(root, 'docs/STACK.md')), 'wf plan scaffold --stack ID --ui ID'],
         ['tune', b.answers['phase.tuned'] === true, 'edit <!-- tune --> blocks, then wf plan set phase.tuned true'],
@@ -424,9 +430,10 @@ function unpend(): void {
     const still: string[] = [];
     for (const g of cfg.gates ?? []) {
         if (!g.pending) continue;
-        // A scaffolded gate keeps its stack's `requires`; any other gate (wf init) needs its command's tools.
-        const src = stack?.gates.find((s) => s.name === g.name);
-        const lacking = src?.requires ? (missing({ ...src, cwd: g.cwd }) ? src.requires : []) : missingTools(g.cmd, join(root, typeof g.cwd === 'string' ? g.cwd : ''));
+        // The gate's own `requires` (written by scaffold and init), else its stack's (a config from
+        // before requires was kept), else the tools its command runs.
+        const requires = g.requires ?? stack?.gates.find((s) => s.name === g.name)?.requires;
+        const lacking = requires ? (missing({ requires, cwd: g.cwd }) ? requires : []) : missingTools(g.cmd, join(root, typeof g.cwd === 'string' ? g.cwd : ''));
         if (!lacking.length) {
             delete g.pending;
             cleared.push(g.name);

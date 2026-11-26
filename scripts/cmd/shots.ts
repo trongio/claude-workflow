@@ -2,7 +2,7 @@
 // wf-help: screenshot a card's surfaces at every dev viewport in the widest locale; writes a manifest
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import { readCards } from '../lib.ts';
+import { plural, readCards } from '../lib.ts';
 import { checkOne, expectedLang, summary } from '../pw/check.ts';
 import { loadFlow, runFlow } from '../pw/flow.ts';
 import { cfg, devBase, devUrlSet, here, launchOrExit, main, NO_DEV_URL, shotsDir, viewportsDefault } from '../pw/lib.ts';
@@ -121,5 +121,5 @@ for (const path of paths) {
 await browser.close();
 const manifest = join(dir, 'manifest.json');
 await Bun.write(manifest, `${JSON.stringify({ id, base, locale: locale ?? null, login: loginFile ?? null, generated: new Date().toISOString(), shots }, null, 2)}\n`);
-console.log(`shots ${id}: ${shots.length} shots, ${bad} with failing checks -> ${manifest}`);
+console.log(`shots ${id}: ${plural(shots.length, 'shot')}, ${bad} with failing checks -> ${manifest}`);
 process.exit(bad ? 1 : 0);

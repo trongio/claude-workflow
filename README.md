@@ -248,15 +248,19 @@ Every command has `--help`; `wf help` lists them all.
 - **Red never lands.** `wf finish` needs `wf gates --release` green for the
   branch tip (it runs the gates in the task worktree when the last result is
   for another commit). Only a gate skipped as "not in release" is fine;
-  pending, skipped for another reason, timed out or failed is not green.
-  `--force` lands anyway and writes a note on the card saying so.
+  pending, skipped for another reason, timed out or failed is not green, and
+  a run on a dirty tree proves no commit. Merge mode lands exactly the gated
+  commit (`wf merge --sha`): a commit after the gates ran is refused.
+  `--force` lands anyway and writes a note on the card saying so; headless
+  sessions cannot use it. Exit codes: 0 landed or PR opened, 1 a landing step
+  failed, 2 refused, 3 conflict, 4 held for the owner, 5 nothing to land.
 - **Read-only agents have no Edit or Write tools.** That covers planner,
   reviewer, scout, researcher, verifier and ux-critic. They keep Bash, so the
   rule that they never check out, stash or reset in any checkout (they read
   revisions with `git show` and `git diff`) lives in their prompts.
 - **Nothing left behind, nothing lost.** `wf finish` refuses while the task
   worktree has uncommitted or untracked files (it lists them; `--force`
-  commits them as a wip commit first), tears down the worktree, test database
+  commits them as a wip commit first, only in the task's own worktree), tears down the worktree, test database
   and ports, and deletes the branch only while its tip is the commit that
   landed. `wf doctor` reports leftovers (a `dev.url` that does not answer is a
   warning unless `--strict`). `wf prune --apply [ID]` removes only

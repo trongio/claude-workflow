@@ -223,7 +223,7 @@
     },
     {
       "name": "tokens",
-      "cmd": "! rg -n --pcre2 --glob '!**/globals.css' --glob '!**/tokens.css' '[\"\\x27`:(\\[]\\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\\b|\\[-?[0-9.]+(?:px|rem)\\]|style=\\{\\{|style=\\x22' src",
+      "cmd": "dirs=$(ls -d src 2>/dev/null); [ -n \"$dirs\" ] || { echo 'tokens: none of src exists; fix the paths of this gate' >&2; exit 1; }; rg -n --pcre2 --glob '!**/globals.css' --glob '!**/tokens.css' '[\"\\x27`:(\\[]\\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\\b|\\[-?[0-9.]+(?:px|rem)\\]|style=\\{\\{|style=\\x22' $dirs; [ $? = 1 ]",
       "when": [
         "src/"
       ],

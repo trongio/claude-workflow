@@ -19,7 +19,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import {
     ACTIVE, CARD_ID, DAY, cardsCommit, LANDED, OVERNIGHT_BATCH, OVERNIGHT_EXCLUDE, STATUSES, WIP, type Card, appendToSection, byPriority, claimable, config,
-    fail, findCard, git, goneHint, idPrefix, milestoneLabel, readCards, root, taskBranch, teardown, today, unknownDepends, update, withLock, worktreeGone,
+    fail, findCard, git, goneHint, idPrefix, milestoneLabel, plural, readCards, root, taskBranch, teardown, today, unknownDepends, update, withLock, worktreeGone,
     worktreeOf, worktrees,
 } from './lib.ts';
 
@@ -374,11 +374,11 @@ ${accept.length ? accept.map((a) => `- [ ] ${a}`).join('\n') : '<!-- acceptance:
         const vel = (d: number) => sum(ms.filter((t) => { const at = shipped(t); return !!at && new Date(`${at}T12:00`).getTime() >= since(d); })) / d;
         const v = vel(14);
         const eta = v ? new Date(Date.now() + ((sum(open) - blocked) / v) * DAY).toISOString().slice(0, 10) : 'unknown';
-        console.log(`${milestoneLabel()}: ${done}/${total} pts (${total ? Math.round((done / total) * 100) : 0}%), ${open.length} cards open, ${blocked} pts blocked on people`);
+        console.log(`${milestoneLabel()}: ${done}/${total} pts (${total ? Math.round((done / total) * 100) : 0}%), ${plural(open.length, 'card')} open, ${blocked} pts blocked on people`);
         console.log(`velocity pts/day: 7d ${vel(7).toFixed(1)}  14d ${v.toFixed(1)}  28d ${vel(28).toFixed(1)}  ->  ETA ${eta} (excludes blocked)`);
         for (const s of STATUSES.filter((s) => s !== 'done')) {
             const l = cards.filter((t) => t.status === s);
-            if (l.length) console.log(`  ${s.padEnd(12)} ${String(l.length).padStart(3)} cards ${String(sum(l)).padStart(4)} pts`);
+            if (l.length) console.log(`  ${s.padEnd(12)} ${String(l.length).padStart(3)} ${l.length === 1 ? 'card ' : 'cards'} ${String(sum(l)).padStart(4)} pts`);
         }
         const you = cards.filter((t) => t.status !== 'done' && (t.status === 'owner-review' || /^owner/i.test(t.blocked)));
         if (you.length) console.log(`waiting on owner (${you.length}):\n${you.map((t) => `  ${t.id} ${t.title}  [${t.blocked || 'review'}]`).join('\n')}`);

@@ -201,7 +201,8 @@ if (cmd === 'get') {
     const locales = targets().length ? targets() : [base];
     const changes = [];
     for (let i = 0; i < args.length; i += 2) for (const locale of locales) changes.push({ locale, key: args[i], value: args[i + 1] });
-    console.log(`set ${edit(changes)} keys in ${locales.join(', ')}`);
+    const n = edit(changes);
+    console.log(`set ${n} ${n === 1 ? 'key' : 'keys'} in ${locales.join(', ')}`);
 } else if (cmd === 'rm') {
     if (!args.length) die('rm needs a KEY');
     const locales = targets().length ? targets() : cat.locales;

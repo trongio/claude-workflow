@@ -474,9 +474,10 @@ export function changedFiles(base: string, head = 'HEAD', dir?: string): string[
     const cwd = dir ?? root;
     const mb = git(['merge-base', base, head], cwd);
     if (!mb.ok) fail(`no merge base between ${base} and ${head}`);
-    const files = new Set(git(['diff', '--name-only', mb.out, head], cwd).out.split('\n'));
+    // --no-renames: a rename lists both paths, so moving a file out of a high-risk path still counts it.
+    const files = new Set(git(['diff', '--name-only', '--no-renames', mb.out, head], cwd).out.split('\n'));
     if (dir) {
-        for (const f of git(['diff', '--name-only', 'HEAD'], cwd).out.split('\n')) files.add(f);
+        for (const f of git(['diff', '--name-only', '--no-renames', 'HEAD'], cwd).out.split('\n')) files.add(f);
         for (const f of git(['ls-files', '--others', '--exclude-standard'], cwd).out.split('\n')) files.add(f);
     }
     files.delete('');
@@ -540,7 +541,7 @@ export function gateRows(json: unknown): GateRow[] {
 
 const PASSED = /^(pass|ok|cached|green)$/i;
 
-// Release green for one commit: a --release run at `sha` where every gate passed, or was
+// Release green for one commit: a --release run on a clean tree at `sha` where every gate passed, or was
 // skipped only because it is not part of the release (release: false). Anything else
 // (pending, timeout, a skip for another reason, no gate at all) is not proven.
 export function releaseVerdict(json: unknown, sha: string): { green: boolean; why: string } {
@@ -548,6 +549,8 @@ export function releaseVerdict(json: unknown, sha: string): { green: boolean; wh
     if (!o || typeof o !== 'object') return { green: false, why: 'no gate result' };
     if (o.sha !== sha) return { green: false, why: `last gate run is for ${String(o.sha ?? '?').slice(0, 7)}, not ${sha.slice(0, 7)}` };
     if (o.release !== true) return { green: false, why: 'last gate run was not --release' };
+    // A dirty-tree run tested files that are not in the commit; a run without the field proves nothing either.
+    if (o.dirty !== false) return { green: false, why: o.dirty === true ? 'last gate run was on a dirty tree' : 'last gate run does not record a clean tree' };
     const rows = gateRows(json);
     const bad = rows.filter((r) => !PASSED.test(r.status) && !(/^skip/i.test(r.status) && r.reason === 'not in release'));
     if (bad.length) return { green: false, why: bad.map((r) => `${r.name} ${r.status}${r.reason ? ` (${r.reason})` : ''}`).join(', ') };
@@ -673,3 +676,41 @@ export function outcomeProse(body: string): string {
     const without = a >= 0 && b > a ? s.slice(0, a) + s.slice(b + AUTO_END.length) : s;
     return without.replace(PROSE_HINT, '').trim();
 }
+
+// The facts of a task branch for the Outcome block: risk, diffstat, commits, the last gate table.
+function outcomeFacts(branch: string): string {
+    const base = baseBranch();
+    if (!git(['rev-parse', '--verify', '--quiet', `${branch}^{commit}`]).ok) return `- branch ${branch} not found; no diff facts`;
+    const dir = worktreeOf(branch);
+    const risk = classifyRisk(changedFiles(base, branch, dir));
+    const log = git(['log', '--format=%h %s', `${base}..${branch}`]).out.split('\n').filter(Boolean);
+    const stat = git(['diff', '--shortstat', `${base}...${branch}`]).out || 'no changes';
+    const lines = [`- risk: ${risk.level} (${risk.file})`, `- diff: ${stat}`, `- commits (${log.length} on ${branch}):`];
+    lines.push(...log.slice(0, 10).map((l) => `  - ${l}`));
+    if (log.length > 10) lines.push(`  - ... ${log.length - 10} more`);
+    const gatesFile = [dir, root.replace(/\/$/, '')].filter(Boolean).map((d) => `${d}/.workflow/gates-last.json`).find(existsSync);
+    const rows = gatesFile ? gateRows(readJson(gatesFile)) : [];
+    if (!rows.length) lines.push('- gates: not run (no .workflow/gates-last.json): not proven');
+    else {
+        lines.push('- gates:', '', '  | gate | status | s |', '  |---|---|---|');
+        lines.push(...rows.map((r) => `  | ${r.name} | ${r.status} | ${r.seconds ?? ''} |`));
+    }
+    return lines.join('\n');
+}
+
+// Regenerates the Outcome's wf:auto block for `card` (adding the section when missing), keeping the prose.
+// `edit` runs first on the card text (wf outcome --tick). Call under withLock.
+export function refreshOutcome(card: Card, edit?: (text: string) => string): void {
+    const auto = `${AUTO_START}\n${outcomeFacts(taskBranch(card))}\n${AUTO_END}`;
+    update(card, {}, (text) => {
+        if (edit) text = edit(text);
+        if (section(text, 'Outcome') === null) return `${text.replace(/\s*$/, '')}\n\n## Outcome\n\n${PROSE_HINT}\n\n${auto}\n`;
+        const a = text.indexOf(AUTO_START);
+        const b = text.indexOf(AUTO_END);
+        if (a < 0 || b < a) return text.replace(/^## Outcome[ \t]*\n/m, () => `## Outcome\n\n${auto}\n`);
+        return text.slice(0, a) + auto + text.slice(b + AUTO_END.length);
+    });
+}
+
+// "1 file", "2 files".
+export const plural = (n: number, word: string, many = `${word}s`) => `${n} ${n === 1 ? word : many}`;
