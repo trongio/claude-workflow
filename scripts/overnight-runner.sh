@@ -96,9 +96,11 @@ snooze() {
 cli_errors() {
     local logfile="$1" outfile="$2"
     cat "$logfile" 2>/dev/null
-    jq -r 'select(.is_error == true) | .result // "" | select(length < 300)' "$outfile" 2>/dev/null
+    jq -r 'select(.is_error == true) | .result // "" | select(length < 200 and (contains("\n") | not))' "$outfile" 2>/dev/null
 }
-is_limit() { grep -qiE '(usage|rate|session|weekly|5-hour|daily) limit|limit reached|hit your ([a-z-]+ )?limit|too many requests|\b429\b'; }
+# CLI limit messages start the line: "Claude AI usage limit reached|<epoch>",
+# "5-hour limit reached - resets 3pm", "You've hit your limit", "API Error: 429".
+is_limit() { grep -qiE "^[^a-z]{0,4}(claude ai usage limit reached|([a-z0-9-]+ ){0,2}limit reached|you've hit your ([a-z0-9-]+ )?limit|api error: 429|.{0,40}rate_limit_error)"; }
 
 # Seconds until the usage window resets, parsed from CLI error text.
 # Understands `...|<epoch>` and `resets 3pm`, `resets at 3:30 PM`, `resets 15:00 (Europe/Berlin)`.
