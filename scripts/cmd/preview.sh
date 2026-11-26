@@ -17,7 +17,7 @@ action="${1:-}" target="${2:-}"
 case "$action" in
 up | down) [ -n "$target" ] || action=usage ;;
 -h | --help)
-    sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '4,8p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
 *) action=usage ;;

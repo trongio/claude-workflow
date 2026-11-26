@@ -17,7 +17,7 @@
 #                with release != false, uncached. Logged to release.log.
 #                Gates with inner: false (full suites) run only here or with --all.
 #   --last       reprint the previous table if the tree is unchanged.
-#   --json       print .workflow/gates-last.json instead of the table.
+#   --json       print .workflow/gates-last.json (one line) instead of the table.
 #   --list       print the gates and whether each would run, then exit.
 #
 # Per gate: cwd, timeout (TIMEOUT kills the process group, red), pending
@@ -27,7 +27,9 @@
 # Cache: content key = command + cwd + `when` paths (whole tree without
 # `when`) + lockfiles, from git object ids; gatesCacheKeys entries per gate in
 # <git common dir>/workflow-gates-cache. Logs: .workflow/gates/<gate>.log.
-# Exit 1 when a gate is red (or, with --release, not proven), 2 on bad usage.
+# Exit 1 when a gate is red (or, with --release, not proven), 2 on bad usage
+# (an unknown --only name). Killed (INT/TERM/HUP): every gate's process group
+# is stopped first, then exit 130/143/129.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -57,7 +59,7 @@ while [ $# -gt 0 ]; do
     --base=*) base="${1#--base=}" ;;
     --timeout=*) tmo="${1#--timeout=}" ;;
     -h | --help)
-        sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     *)
@@ -127,6 +129,28 @@ fi
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gates.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
+pids=()
+declare -A heavy_pid=()
+# Killed: stop the runners, then every recorded gate/watchdog process group
+# (each gate runs in its own group, so a signal to this script alone misses them).
+# shellcheck disable=SC2329 # invoked by the traps below
+on_signal() {
+    local f p sig
+    trap - INT TERM HUP
+    for p in "${pids[@]}" "${!heavy_pid[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
+    for sig in TERM KILL; do
+        for f in "$tmp"/pg.*; do
+            [ -f "$f" ] || continue
+            while read -r p; do kill -"$sig" -- "-$p" 2>/dev/null || true; done <"$f"
+        done
+        if [ "$sig" = TERM ]; then sleep 0.5; fi
+    done
+    rm -rf "$tmp"
+    exit "$1"
+}
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
 
 # The working tree as `oid<TAB>path` from the index plus dirty files only
 # (one ls-files, one status, one hash-object): no file is read unless it is
@@ -165,7 +189,7 @@ tree_hash() { git hash-object --stdin <"$tmp/tree"; }
 if [ "$last" = 1 ] && [ -f "$state/gates-last.txt" ] && [ -f "$last_json" ]; then
     build_listing
     if [ "$(tree_hash)@$head_sha" = "$(jq -r '"\(.tree)@\(.sha)"' "$last_json")" ]; then
-        if [ "$json" = 1 ]; then cat "$last_json"; else cat "$state/gates-last.txt"; fi
+        if [ "$json" = 1 ]; then jq -c . "$last_json"; else cat "$state/gates-last.txt"; fi
         exit "$(jq -r '.exit // 0' "$last_json")"
     fi
     echo "gates: tree changed since the last run, running" >&2
@@ -182,8 +206,12 @@ fi
 if [ "$release" = 1 ] && [ -n "$release_cmd" ]; then
     log_release "cmd: $release_cmd"
     set +e
-    bash -o pipefail -c "$release_cmd" >"$logdir/release.log" 2>&1 </dev/null
+    set -m
+    bash -o pipefail -c "$release_cmd" >"$logdir/release.log" 2>&1 </dev/null &
+    echo "$!" >"$tmp/pg.release"
+    wait "$!"
     rc=$?
+    set +m
     set -e
     secs=$(($(date +%s) - started_at))
     cat "$logdir/release.log" >>"$root/$release_log"
@@ -195,8 +223,13 @@ if [ "$release" = 1 ] && [ -n "$release_cmd" ]; then
         --argjson s "$secs" --argjson rc "$rc" \
         '{sha: $sha, tree: $tree, base: $base, release: true, exit: (if $rc == 0 then 0 else 1 end),
           results: [{name: "release", status: $st, seconds: $s, cached: false, rerun: 0}]}' >"$last_json"
-    printf 'release | %s | %ss | exit %s | log %s\n' "$status" "$secs" "$rc" "$release_log" | tee "$state/gates-last.txt"
-    [ "$rc" = 0 ] || tail -n "$tail_lines" "$logdir/release.log"
+    printf 'release | %s | %ss | exit %s | log %s\n' "$status" "$secs" "$rc" "$release_log" >"$state/gates-last.txt"
+    if [ "$json" = 1 ]; then
+        jq -c . "$last_json"
+    else
+        cat "$state/gates-last.txt"
+        [ "$rc" = 0 ] || tail -n "$tail_lines" "$logdir/release.log"
+    fi
     [ "$rc" = 0 ]
     exit
 fi
@@ -214,6 +247,23 @@ done < <(jq -j '.gates[] | .name, "\u0000", .cmd, "\u0000", ((.when // []) | joi
     (.timeout // 900 | tostring), "\u0000", (if .pending == true then "1" else "0" end), "\u0000",
     (if .release == false then "0" else "1" end), "\u0000", (.rerun.when // ""), "\u0000",
     (.rerun.max // 1 | tostring), "\u0000", (if .heavy == true then "1" else "0" end), "\u0000", (if .inner == false then "0" else "1" end), "\u0000"' "$cfg")
+
+# --only names must exist: a typo would otherwise run nothing and pass.
+if [ -n "$only" ]; then
+    bad_names=()
+    IFS=',' read -ra wanted <<<"$only"
+    for x in "${wanted[@]}"; do
+        [ -n "$x" ] || continue
+        printf '%s\n' "${names[@]}" | grep -qxF -- "$x" || bad_names+=("$x")
+    done
+    if [ "${#bad_names[@]}" -gt 0 ]; then
+        echo "gates: unknown gate name(s): ${bad_names[*]} (valid: $(printf '%s ' "${names[@]}" | sed 's/ $//; s/ /, /g'))" >&2
+        exit 2
+    fi
+fi
+# Name column: the longest gate name plus one space, at least 12.
+w=12
+for n in "${names[@]}"; do [ $((${#n} + 1)) -gt "$w" ] && w=$((${#n} + 1)); done
 
 regex_for() {
     local globs=()
@@ -242,7 +292,7 @@ done
 
 if [ "$list" = 1 ]; then
     for i in "${!names[@]}"; do
-        printf '%-12s %-20s %s\n' "${names[$i]}" "${reasons[$i]:-runs}" "${cmds[$i]}"
+        printf '%-*s %-20s %s\n' "$w" "${names[$i]}" "${reasons[$i]:-runs}" "${cmds[$i]}"
     done
     exit 0
 fi
@@ -313,6 +363,7 @@ run_one() {
         rm -f "$out.timeout"
         (cd "$root/${cwds[$i]}" && exec bash -c "${cmds[$i]}") >"$log" 2>&1 </dev/null &
         pid=$!
+        echo "$pid" >"$tmp/pg.$n"
         (
             sleep "${tmos[$i]}"
             touch "$out.timeout"
@@ -321,6 +372,7 @@ run_one() {
             kill -KILL -- "-$pid"
         ) >/dev/null 2>&1 &
         wd=$!
+        echo "$wd" >>"$tmp/pg.$n"
         wait "$pid"
         rc=$?
         kill -- "-$wd" 2>/dev/null
@@ -337,8 +389,7 @@ run_one() {
     printf '%s %s %s\n' "$rc" "$((SECONDS - start))" "$try" >"$out"
 }
 
-heavy_q=() pids=()
-declare -A heavy_pid=()
+heavy_q=()
 for i in "${selected[@]}"; do
     n="${names[$i]}"
     if [ -n "${key[$n]:-}" ] && grep -qxF "$n ${key[$n]}" "$cache_file" 2>/dev/null; then
@@ -394,7 +445,7 @@ fi
 red=() unproven=() npass=0
 : >"$tmp/rows"
 : >"$tmp/table"
-row() { printf '%-12s| %-13s| %5s | %s\n' "$1" "$2" "$3" "$4" >>"$tmp/table"; }
+row() { printf '%-*s| %-13s| %5s | %s\n' "$w" "$1" "$2" "$3" "$4" >>"$tmp/table"; }
 row gate result sec note
 for i in "${!names[@]}"; do
     n="${names[$i]}"
@@ -435,9 +486,10 @@ summary="$npass passed, ${#red[@]} red"
 if [ "${#unproven[@]}" -gt 0 ]; then summary="$summary; not proven: $(printf '%s ' "${unproven[@]}")"; fi
 if [ -n "$mem_note" ]; then summary="$summary; $mem_note"; fi
 printf '%s\n' "${summary% }" >>"$tmp/table"
+esc="$(printf '\033')"
 for n in "${red[@]}"; do
     printf '\n--- %s (last %s lines, full: .workflow/gates/%s.log) ---\n' "$n" "$tail_lines" "$n" >>"$tmp/table"
-    sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' "$logdir/$n.log" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n "$tail_lines" >>"$tmp/table" ||
+    sed -e "s/${esc}\[[0-9;]*[A-Za-z]//g" "$logdir/$n.log" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n "$tail_lines" >>"$tmp/table" ||
         echo "(no output)" >>"$tmp/table"
 done
 
@@ -451,5 +503,5 @@ jq -Rn --arg sha "$head_sha" --arg tree "$tree" --arg base "$base" --argjson rel
       results: [inputs | split("\t") | {name: .[0], status: .[1], seconds: (.[2] | tonumber),
         cached: (.[3] == "true"), rerun: (.[4] | tonumber)}]}' <"$tmp/rows" >"$last_json"
 cp "$tmp/table" "$state/gates-last.txt"
-if [ "$json" = 1 ]; then cat "$last_json"; else cat "$tmp/table"; fi
+if [ "$json" = 1 ]; then jq -c . "$last_json"; else cat "$tmp/table"; fi
 exit "$code"

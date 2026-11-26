@@ -5,8 +5,9 @@
 #
 # Runs in the main checkout (found via git's common dir, so it works from a
 # worktree too), under a repo-wide lock so parallel tasks never merge at the
-# same moment. Checks out --into (default: the base branch) when needed and
-# merges BRANCH with --no-ff and a conventional message.
+# same moment. Refuses unless the main checkout is already on --into (default:
+# the base branch): it never changes the main checkout's HEAD. Merges BRANCH
+# with --no-ff and a conventional message.
 #
 # Prints `merged <branch> (<n> commits, <files> files)`, or on conflict the
 # conflicted files with the first 10 lines of each hunk, leaving the merge in
@@ -31,7 +32,7 @@ while [ $# -gt 0 ]; do
         shift
         ;;
     -h | --help)
-        sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     *) branch="$1" ;;
@@ -54,11 +55,16 @@ g rev-parse --verify --quiet "$branch^{commit}" >/dev/null || {
 wf_lock merge
 trap 'wf_unlock merge' EXIT
 
-# The target branch checked out in another worktree cannot be checked out here.
-other="$(g worktree list --porcelain | awk -v b="refs/heads/$into" -v m="$main" '
-    /^worktree / { p = substr($0, 10) } $0 == "branch " b && p != m { print p; exit }')"
-if [ -n "$other" ]; then
-    echo "wt-merge: $into is checked out in another worktree ($other); merge there, or use another --into" >&2
+# Never move the main checkout's HEAD: it may be served, or another session's.
+on="$(g branch --show-current)"
+if [ "$on" != "$into" ]; then
+    other="$(g worktree list --porcelain | awk -v b="refs/heads/$into" -v m="$main" '
+        /^worktree / { p = substr($0, 10) } $0 == "branch " b && p != m { print p; exit }')"
+    if [ -n "$other" ]; then
+        echo "wt-merge: $into is checked out in another worktree ($other); merge there, or use another --into" >&2
+    else
+        echo "wt-merge: $main is on ${on:-a detached HEAD}, not $into; wf merge never switches it (check out $into there yourself)" >&2
+    fi
     exit 2
 fi
 
@@ -72,13 +78,6 @@ fi
 if [ -n "$(g status --porcelain -- tasks)" ]; then
     g add -A tasks
     g commit -q -m "chore(tasks): update cards" -- tasks && echo "committed pending card changes"
-fi
-
-if [ "$(g branch --show-current)" != "$into" ]; then
-    if ! out="$(g checkout --quiet "$into" 2>&1)"; then
-        echo "wt-merge: could not check out $into in $main: $out" >&2
-        exit 2
-    fi
 fi
 
 commits="$(g rev-list --count "$into..$branch")"

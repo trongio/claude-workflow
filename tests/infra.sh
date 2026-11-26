@@ -134,7 +134,8 @@ git worktree add -q -b wf/WF-1 "$wt" main
 git -C "$wt" config extensions.worktreeConfig true
 git -C "$wt" config --worktree core.hooksPath /nowhere
 "$wf" wt-init "$wt" 2>"$dir-init.err" | grep -q '^ready' || die "wt-init"
-[ -d "$wt/node_modules" ] && [ ! -L "$wt/node_modules" ] && [ -f "$wt/node_modules/.wf-hardlinked" ] && ok "wt-init: deps hardlink-copied, never symlinked" || die "wt-init link"
+[ -d "$wt/node_modules" ] && [ ! -L "$wt/node_modules" ] && grep -qE 'node_modules: (reflink|clone) copy|node_modules: hardlinked' "$dir-init.err" &&
+    ok "wt-init: deps copied (method printed), never symlinked" || die "wt-init link: $(cat "$dir-init.err")"
 grep -q "^DB_DATABASE='app_wf_1'" "$wt/.workflow/env" && grep -qE "^APP_PORT='81[0-9]{2}'" "$wt/.workflow/env" && ok "wt-init: env rendered with slug and port" || die "env: $(cat "$wt/.workflow/env")"
 [ "$(git -C "$wt" config core.hooksPath)" = .hooks ] && grep -q 'core.hooksPath' "$dir-init.err" && ok "wt-init: hooksPath aligned with main" || die "hooksPath"
 ledger="$(git rev-parse --path-format=absolute --git-common-dir)/workflow-resources.json"
@@ -167,10 +168,11 @@ git checkout -q src/a.ts
 [ ! -d "$wt" ] && grep -q 'dropped app_wf_1' "$mark" && ok "move done: teardown ran with {slug}, worktree gone" || die "teardown on done"
 [ "$(jq '.worktrees | length' "$ledger")" = 0 ] && ok "move done: ledger empty" || die "ledger left: $(cat "$ledger")"
 git rev-parse -q --verify refs/heads/wf/WF-1 >/dev/null && ok "move done: unmerged branch kept" || die "unmerged branch deleted"
+"$wf" note WF-1 "merge check: a pending card edit" >/dev/null # move done may have committed its own edits
 "$wf" merge wf/WF-1 | grep -q 'committed pending card changes' && ok "wt-merge: commits pending card edits first" || die "merge cards"
 
 # Prune: the now-merged branch is a leftover.
-"$wf" prune | grep -q "would delete merged branch wf/WF-1" && ok "prune: dry run lists the merged branch" || die "prune dry"
+"$wf" prune | grep -q "would delete branch wf/WF-1 (merged into main)" && ok "prune: dry run lists the merged branch" || die "prune dry"
 "$wf" doctor >/dev/null && die "doctor must fail on leftovers" || ok "doctor: fails on leftovers"
 "$wf" prune --apply >/dev/null
 ! git rev-parse -q --verify refs/heads/wf/WF-1 >/dev/null && ok "prune: merged branch gone" || die "prune remove"

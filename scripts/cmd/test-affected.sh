@@ -6,8 +6,10 @@
 #   plus untracked. With testAffected.map ([{src: glob, tests: template}],
 #   {name} = source basename without extension) and testAffected.cmd
 #   ({files} = the selected tests), runs the mapped tests that exist. Without
-#   a map: vitest related, jest --findRelatedTests, pest --dirty, or go test of
-#   the changed packages. Prints the mapping, then runs it (--dry: print only).
+#   a map: vitest related, jest --findRelatedTests, pest --dirty, node --test
+#   (scripts.test uses it: changed tests plus <name>.test.* of changed sources),
+#   or go test of the changed packages. File names reach the command as
+#   arguments, never as shell text. Prints the mapping, then runs it (--dry: print only).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,7 +22,7 @@ for a in "$@"; do
     case "$a" in
     --dry) dry=1 ;;
     -h | --help)
-        sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     -*)
@@ -79,8 +81,12 @@ if [ "$(jq '.testAffected.map // [] | length' "$cfg" 2>/dev/null || echo 0)" -gt
         echo "test-affected: no mapped tests for ${#changed[@]} changed files"
         exit 0
     fi
-    files="$(printf '%s\n' "${!pick[@]}" | sort | paste -sd' ' -)"
-    run bash -c "${tcmd//\{files\}/$files}"
+    mapfile -t files < <(printf '%s\n' "${!pick[@]}" | sort)
+    # {files} becomes "$@": names are arguments, so `x$(cmd).test.ts` stays a name.
+    echo "run: ${tcmd//\{files\}/${files[*]}}"
+    [ "$dry" = 1 ] && exit 0
+    # shellcheck disable=SC2016 # "$@" is for the inner shell
+    bash -c "${tcmd//\{files\}/\"\$@\"}" test-affected "${files[@]}"
     exit
 fi
 
@@ -96,8 +102,33 @@ elif [ -f package.json ] && jq -e '(.devDependencies // {}) + (.dependencies // 
 elif [ -x vendor/bin/pest ]; then
     echo "${#src[@]} changed files -> pest --dirty"
     run vendor/bin/pest --dirty
+elif [ -f package.json ] && jq -e '(.scripts.test // "") | test("node +--test")' package.json >/dev/null; then
+    declare -A pick=()
+    tre='(\.|_)(test|spec)\.[cm]?[jt]sx?$'
+    for f in "${src[@]}"; do
+        if [[ "$f" =~ $tre ]]; then
+            pick[$f]=1
+            continue
+        fi
+        name="$(basename "$f")"
+        name="${name%.*}"
+        while IFS= read -r t; do
+            [ -e "$t" ] && [[ "$t" =~ $tre ]] && pick[$t]=1 && echo "$f -> $t"
+        done < <(git ls-files -- "*/$name.test.*" "$name.test.*" "*/$name.spec.*" "$name.spec.*")
+    done
+    if [ "${#pick[@]}" -eq 0 ]; then
+        echo "test-affected: no node tests for ${#changed[@]} changed files"
+        exit 0
+    fi
+    mapfile -t tests < <(printf '%s\n' "${!pick[@]}" | sort)
+    echo "${#tests[@]} test files -> node --test"
+    run node --test "${tests[@]}"
 elif [ -f go.mod ]; then
-    mapfile -t pkgs < <(printf '%s\n' "${src[@]}" | grep '\.go$' | xargs -r -n1 dirname | sort -u | sed 's|^|./|')
+    pkgs=()
+    while IFS= read -r f; do
+        [[ "$f" == *.go ]] && pkgs+=("./$(dirname "$f")")
+    done < <(printf '%s\n' "${src[@]}")
+    [ "${#pkgs[@]}" -eq 0 ] || mapfile -t pkgs < <(printf '%s\n' "${pkgs[@]}" | sort -u)
     if [ "${#pkgs[@]}" -eq 0 ]; then
         echo "test-affected: no changed go packages"
         exit 0
@@ -105,6 +136,6 @@ elif [ -f go.mod ]; then
     printf '%s\n' "${pkgs[@]}" | sed 's/^/package /'
     run go test "${pkgs[@]}"
 else
-    echo "test-affected: no testAffected.map and no known stack (vitest, jest, pest, go)" >&2
+    echo "test-affected: no testAffected.map and no known stack (vitest, jest, pest, node --test, go)" >&2
     exit 2
 fi

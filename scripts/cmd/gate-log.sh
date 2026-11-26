@@ -18,7 +18,7 @@ while [ $# -gt 0 ]; do
         shift
         ;;
     -h | --help)
-        sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '4,5p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     -*)

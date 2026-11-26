@@ -4,12 +4,16 @@
 # Usage: wf wt-init [WORKTREE_DIR]     (default: current worktree)
 #
 # Driven by .claude/workflow.json "worktree":
-#   link:  dependency dirs (node_modules, vendor) copied from the main checkout
-#          as hardlinks (cp -al), else as a reflink/plain copy. Never symlinks:
-#          a symlinked node_modules resolves to a second React copy and breaks
-#          dev servers. A hardlinked dir gets a .wf-hardlinked marker; when the
-#          worktree's lockfile differs from main's, the package manager's
-#          install runs there (it replaces files instead of editing main's).
+#   link:  dependency dirs (node_modules, vendor) copied from the main checkout,
+#          never symlinked (a symlinked node_modules resolves to a second React
+#          copy and breaks dev servers). Method, printed per dir: a reflink copy
+#          (cp -a --reflink, copy-on-write, nothing shared) when a probe shows
+#          the filesystem supports it; else hardlinks (cp -al) with the files
+#          tools rewrite in place (vendor/composer, autoload.php, bin;
+#          node_modules/.cache, .vite, .package-lock.json)
+#          made real copies, and a .wf-hardlinked marker; else a plain copy.
+#          When the worktree's lockfile differs from main's, the package
+#          manager's install runs there.
 #   cache: build caches copied copy-on-write (cp --reflink=auto) when missing.
 #   copy:  files copied once when missing, e.g. [".env"]
 #   env:   KEY -> template with {id} {slug} {port}, written to .workflow/env
@@ -24,7 +28,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 wf_need jq
 
 case "${1:-}" in -h | --help)
-    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
     exit 0
     ;;
 esac
@@ -42,6 +46,32 @@ fi
 # Copy-on-write where the filesystem allows it, plain copy otherwise.
 cow_copy() {
     cp -R --reflink=auto "$1" "$2" 2>/dev/null || cp -Rc "$1" "$2" 2>/dev/null || cp -R "$1" "$2"
+}
+
+# Reflink support, probed once: a clone from the git dir into the worktree.
+reflink=""
+probe_reflink() {
+    local src dst
+    src="$(git rev-parse --path-format=absolute --git-common-dir)/wf-reflink-probe.$$"
+    dst="$dir/.wf-reflink-probe.$$"
+    echo probe >"$src"
+    if cp --reflink=always "$src" "$dst" 2>/dev/null; then
+        reflink=gnu
+    elif [ "$(uname)" = Darwin ] && cp -c "$src" "$dst" 2>/dev/null; then
+        reflink=clone
+    else
+        reflink=none
+    fi
+    rm -f "$src" "$dst"
+}
+
+# Files package managers and dev tools write IN PLACE (a hardlink would carry
+# the write into main's copy). Replaced by real copies after a hardlink copy.
+in_place_paths() {
+    case "$(basename "$1")" in
+    vendor) printf '%s\n' composer autoload.php bin ;;
+    node_modules) printf '%s\n' .cache .vite .vite-temp .package-lock.json .modules.yaml ;;
+    esac
 }
 
 # "<lockfile> <install command>" for a dependency dir, if one applies.
@@ -66,6 +96,11 @@ install_for() {
 
 while IFS= read -r name; do
     [ -n "$name" ] || continue
+    case "$name" in /* | ../* | */../* | *..)
+        echo "wt-init: link entry $name leaves the worktree, skipped" >&2
+        continue
+        ;;
+    esac
     if [ -L "$dir/$name" ]; then
         rm "$dir/$name"
         echo "wt-init: $name was a symlink, replacing it with a copy" >&2
@@ -76,19 +111,32 @@ while IFS= read -r name; do
         continue
     fi
     mkdir -p "$(dirname "$dir/$name")"
-    if cp -al "$main/$name" "$dir/$name" 2>/dev/null; then
+    [ -n "$reflink" ] || probe_reflink
+    if [ "$reflink" = gnu ] && cp -a --reflink=always "$main/$name" "$dir/$name" 2>/dev/null; then
+        echo "wt-init: $name: reflink copy (copy-on-write, nothing shared with main)" >&2
+    elif [ "$reflink" = clone ] && cp -Rc "$main/$name" "$dir/$name" 2>/dev/null; then
+        echo "wt-init: $name: clone copy (copy-on-write, nothing shared with main)" >&2
+    elif rm -rf "${dir:?}/$name" && cp -al "$main/$name" "$dir/$name" 2>/dev/null; then
         echo "hardlinked from $main/$name: installs replace files; never edit them in place" >"$dir/$name/.wf-hardlinked"
-        sub="$(dirname "$name")"
-        lock="" inst=""
-        read -r lock inst <<<"$(install_for "$dir/$sub" "$(basename "$name")")" || true
-        if [ -n "$lock" ] && ! cmp -s "$main/$sub/$lock" "$dir/$sub/$lock"; then
-            echo "wt-init: $sub/$lock differs from main, running: $inst" >&2
-            (cd "$dir/$sub" && bash -c "$inst") >&2 || echo "wt-init: $inst failed" >&2
-        fi
+        copied=()
+        while IFS= read -r p; do
+            [ -e "$main/$name/$p" ] || continue
+            rm -rf "${dir:?}/$name/$p"
+            cp -R "$main/$name/$p" "$dir/$name/$p"
+            copied+=("$p")
+        done < <(in_place_paths "$name")
+        echo "wt-init: $name: hardlinked${copied[0]:+ (real copies: ${copied[*]})}" >&2
     else
         rm -rf "${dir:?}/$name"
         cow_copy "$main/$name" "$dir/$name"
-        echo "wt-init: $name copied (hardlinks not possible here)" >&2
+        echo "wt-init: $name: plain copy (no reflinks or hardlinks here)" >&2
+    fi
+    sub="$(dirname "$name")"
+    lock="" inst=""
+    read -r lock inst <<<"$(install_for "$dir/$sub" "$(basename "$name")")" || true
+    if [ -n "$lock" ] && ! cmp -s "$main/$sub/$lock" "$dir/$sub/$lock"; then
+        echo "wt-init: $sub/$lock differs from main, running: $inst" >&2
+        (cd "$dir/$sub" && bash -c "$inst") >&2 || echo "wt-init: $inst failed" >&2
     fi
 done < <(jq -r '.worktree.link // [] | .[]' "$cfg")
 

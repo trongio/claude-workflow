@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # wf-help: commit tasks/ in the main checkout under the merge lock (-m MSG)
 #
-# Usage: wf cards-commit [-m MSG]     (default message: chore(tasks): update cards)
+# Usage: wf cards-commit [-m MSG] [--branch B]   (default message: chore(tasks): update cards)
 #
 # Commits only tasks/, in the main checkout (found from any worktree), under the
-# same lock wf merge takes. Prints one line. Unknown flags are refused.
+# same lock wf merge takes. Refuses unless the main checkout is on the base
+# branch (or on B with --branch B); never switches it. Prints one line.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/common.sh
 . "$here/lib/common.sh"
 
-usage() { sed -n '4,7p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
-msg=""
+usage() { sed -n '4,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+msg="" want=""
 while [ $# -gt 0 ]; do
     case "$1" in
     -m | --message)
@@ -24,6 +25,15 @@ while [ $# -gt 0 ]; do
         shift
         ;;
     --message=*) msg="${1#--message=}" ;;
+    --branch)
+        [ $# -ge 2 ] || {
+            echo "cards-commit: --branch needs a name" >&2
+            exit 2
+        }
+        want="$2"
+        shift
+        ;;
+    --branch=*) want="${1#--branch=}" ;;
     -h | --help)
         usage
         exit 0
@@ -47,6 +57,12 @@ done
 msg="${msg:-chore(tasks): update cards}"
 
 main="$(wf_main)"
+want="${want:-$(wf_base_branch)}"
+on="$(git -C "$main" branch --show-current)"
+if [ "$on" != "$want" ]; then
+    echo "cards-commit: the main checkout $main is on ${on:-a detached HEAD}, not $want; switch it yourself (or --branch $on)" >&2
+    exit 2
+fi
 wf_lock merge
 trap 'wf_unlock merge' EXIT
 git -C "$main" add -A tasks
