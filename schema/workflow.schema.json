@@ -232,6 +232,11 @@
           "type": "string",
           "default": ".workflow/shots",
           "description": "Where screenshots are written."
+        },
+        "loginFlow": {
+          "type": "string",
+          "default": ".workflow/login.flow.json",
+          "description": "wf flow file that signs in; wf shots and wf check --auth reuse its storage state."
         }
       }
     },
@@ -434,6 +439,10 @@
         "maxFixRounds": {
           "type": "integer",
           "default": 2
+        },
+        "localeDir": {
+          "type": "string",
+          "description": "Directory of JSON locale catalogs for wf lang (auto-detected when omitted)."
         }
       }
     },
