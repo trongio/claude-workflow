@@ -125,6 +125,11 @@
                 "default": 1
               }
             }
+          },
+          "heavy": {
+            "type": "boolean",
+            "default": false,
+            "description": "CPU-heavy (tests, build, typecheck): counted against gatesJobs."
           }
         }
       }
@@ -163,6 +168,25 @@
             "type": "string"
           },
           "description": "Commands run in the worktree after linking, in order."
+        },
+        "cache": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Build/analysis cache dirs copied copy-on-write (cp --reflink=auto) from the main checkout at create: .next/cache, node_modules/.cache, .phpstan-cache, target/."
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Env written to the worktree's .workflow/env; {id}, {slug}, {port} expand. E.g. DB_DATABASE=app_{slug}, CARGO_TARGET_DIR shared."
+        },
+        "pool": {
+          "type": "integer",
+          "default": 0,
+          "description": "Reusable worktrees kept warm (reset to base) instead of create/destroy per card. 0 = off."
         }
       }
     },
@@ -451,6 +475,31 @@
               }
             }
           }
+        }
+      }
+    },
+    "gatesJobs": {
+      "type": "integer",
+      "default": 0,
+      "description": "Max heavy gates running at once (0 = CPU count / 2). Light gates are never queued."
+    },
+    "gatesCacheKeys": {
+      "type": "integer",
+      "default": 8,
+      "description": "Cache entries kept per gate, so parallel worktrees do not evict each other."
+    },
+    "planner": {
+      "type": "object",
+      "properties": {
+        "skipFor": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "S"
+          ],
+          "description": "Card sizes that skip the planner (the manager writes the brief)."
         }
       }
     }
