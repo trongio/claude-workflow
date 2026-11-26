@@ -1,37 +1,61 @@
 #!/usr/bin/env bash
 # wf-help: check config, gate tools, hooks, dev url, locks, leftovers, stack doc age (prints failures only)
 #
-# Usage: wf doctor
+# Usage: wf doctor [--strict]
 # Checks: workflow.json against the schema (types and enums of top-level keys
 # and their direct properties, unknown keys); every gate's first command word
-# exists; core.hooksPath (worktrees match main, a hooks dir is wired); dev.url
-# answers; stale locks; leftovers (merged or done worktrees, ledger entries
-# without a live worktree, merged wf/* branches, orphan databases, processes
-# outliving their worktree); docs/STACK.md newer than 90 days.
-# Exit 1 when anything fails.
+# exists (a pending gate names its missing tool); core.hooksPath (worktrees
+# match main, a hooks dir is wired); dev.url answers (a WARN: the app may not
+# be running yet; FAIL with --strict); stale locks; leftovers (merged or done
+# worktrees, ledger entries without a live worktree, merged wf/* branches,
+# orphan databases, processes outliving their worktree); docs/STACK.md newer
+# than 90 days. Prints problems only. Exit 1 when anything fails.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/common.sh
 . "$here/lib/common.sh"
 wf_need jq
-case "${1:-}" in -h | --help)
-    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
-    exit 0
-    ;;
-esac
+strict=0
+for a in "$@"; do
+    case "$a" in
+    --strict) strict=1 ;;
+    -h | --help)
+        sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    *)
+        echo "doctor: unknown argument $a" >&2
+        exit 2
+        ;;
+    esac
+done
 
 root="$(wf_root)"
 main="$(wf_main)"
 cd "$root" || exit 2
 cfg="$(wf_config)"
 schema="$here/../schema/workflow.schema.json"
-fails=0 checks=0
+fails=0 checks=0 warns=0
 bad() {
     fails=$((fails + 1))
     echo "FAIL $*"
 }
+warn() {
+    warns=$((warns + 1))
+    echo "WARN $*"
+}
 check() { checks=$((checks + 1)); }
+
+# The slow independent checks start now and are read at the end.
+bg="$(mktemp -d "${TMPDIR:-/tmp}/doctor.XXXXXX")"
+trap 'rm -rf "$bg"' EXIT
+"$here/cmd/prune.sh" >"$bg/prune" 2>/dev/null &
+"$here/cmd/orphans.sh" --json >"$bg/orphans" 2>/dev/null &
+url="$(wf_get .dev.url)"
+if [ -n "$url" ] && command -v curl >/dev/null; then
+    { curl -s -o /dev/null -m 5 "$url" && echo up || echo down; } >"$bg/url" 2>/dev/null &
+fi
 
 # 1. Config vs schema.
 check
@@ -69,11 +93,19 @@ else
     # 2. Gate tools.
     while IFS=$'\t' read -r name cwd pending cmd; do
         check
-        [ "$pending" = true ] && {
-            echo "pending gate $name: not proven until its tool is set up"
-            continue
-        }
         word="$(printf '%s\n' "$cmd" | awk '{ for (i = 1; i <= NF; i++) if ($i !~ /^[A-Za-z_][A-Za-z0-9_]*=/) { print $i; exit } }')"
+        if [ "$pending" = true ]; then
+            if [ -z "$word" ]; then
+                echo "pending gate $name: not proven until its tool is set up"
+            elif [[ "$word" == */* ]] && [ ! -x "$root/$cwd/$word" ]; then
+                echo "pending gate $name: $word not found (cwd $cwd)"
+            elif [[ "$word" != */* ]] && ! (cd "$root/$cwd" 2>/dev/null && command -v "$word" >/dev/null); then
+                echo "pending gate $name: $word not on PATH"
+            else
+                echo "pending gate $name: $word is installed now; set pending false"
+            fi
+            continue
+        fi
         [ -n "$word" ] || continue
         if [[ "$word" == */* ]]; then
             [ -x "$root/$cwd/$word" ] || [ -x "$word" ] || bad "gate $name: $word not found (cwd $cwd)"
@@ -98,15 +130,6 @@ while IFS= read -r w; do
     [ "$have" = "$want" ] || bad "worktree $w: core.hooksPath '$have' differs from main '$want' (wf wt-init $w fixes it)"
 done < <(git -C "$main" worktree list --porcelain | sed -n 's/^worktree //p')
 
-# 4. Dev url.
-url="$(wf_get .dev.url)"
-if [ -n "$url" ]; then
-    check
-    if command -v curl >/dev/null; then
-        curl -s -o /dev/null -m 5 "$url" || bad "dev.url $url does not answer (start the dev stack)"
-    fi
-fi
-
 # 5. Stale locks.
 check
 common="$(git rev-parse --path-format=absolute --git-common-dir)"
@@ -120,13 +143,22 @@ if [ -d "$main/tasks/.claim.lock" ] && [ -n "$(find "$main/tasks/.claim.lock" -m
 fi
 
 # 6. Leftovers: worktrees, ledger, branches, databases, processes.
+wait
 check
 while IFS= read -r line; do
     case "$line" in would* | blocked* | orphan*) bad "leftover: $line" ;; esac
-done < <("$here/cmd/prune.sh" 2>/dev/null)
+done <"$bg/prune"
 check
-while IFS= read -r line; do bad "orphan process: $line"; done < <("$here/cmd/orphans.sh" --json 2>/dev/null |
-    jq -r '.[] | select(.stale) | "\(.pid) \(.cmd) in removed worktree \(.cwd) (wf orphans --kill)"')
+while IFS= read -r line; do bad "orphan process: $line"; done < <(jq -r '.[]? | select(.stale) |
+    "\(.pid) \(.cmd) in removed worktree \(.cwd) (wf orphans --kill \(.worktree))"' "$bg/orphans" 2>/dev/null)
+
+# Dev url (probed in the background above).
+if [ -f "$bg/url" ]; then
+    check
+    if [ "$(cat "$bg/url")" != up ]; then
+        if [ "$strict" = 1 ]; then bad "dev.url $url does not answer (start the dev stack)"; else warn "dev.url $url does not answer (fine before the app runs; --strict fails on it)"; fi
+    fi
+fi
 
 # 7. Stack doc age.
 if [ -f "$main/docs/STACK.md" ]; then
@@ -143,7 +175,7 @@ if [ -f "$main/docs/STACK.md" ]; then
 fi
 
 if [ "$fails" = 0 ]; then
-    echo "doctor: OK ($checks checks)"
+    echo "doctor: OK ($checks checks$([ "$warns" = 0 ] || echo ", $warns warning(s)"))"
 else
     echo "doctor: $fails problem(s)"
     exit 1
