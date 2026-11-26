@@ -610,6 +610,17 @@ exits 5 "finish with no net change exits 5" "$wf" finish "$id" --mode merge
 grep -q "nothing to land: the branch has no changes against main; wf move $id done --verified or backlog" "$dir.out" && [ "$(git log -1 --format=%s main)" != "No-op ($id)" ] &&
     ok "nothing to land: message, no merge commit" || die "nothing to land: $(cat "$dir.out") $head"
 
+# A hung tracker.onMerge is killed with its whole process group, not only the direct child.
+id="$("$wf" new "Hung hook" --links "#11" | cut -d' ' -f1)"
+criterion "$id" && git add -A tasks && git commit -qm "chore(tasks): $id" -q
+ready "$id" hung.txt
+set_config ".tracker.onMerge = \"sh -c 'sleep 2931 & wait'\""
+expect "finish with a hung onMerge" env WF_ONMERGE_TIMEOUT=1 "$wf" finish "$id" --mode none
+grep -q 'tracker: #11 failed: .*timed out after 1 s' "$dir.out" && ! pgrep -fx 'sleep 2931' >/dev/null &&
+    ok "onMerge timeout kills the hook's process group: no sleep left" || die "hung onMerge: $(pgrep -fx 'sleep 2931' || true) $(cat "$dir.out")"
+pkill -fx 'sleep 2931' || true
+set_config '.tracker.onMerge = ""'
+
 # The help documents every exit code.
 "$wf" finish --help >"$dir.out"
 for c in 0 2 3 4 5; do grep -q "^  $c  " "$dir.out" || die "finish --help lacks exit $c"; done

@@ -38,7 +38,8 @@ Then tracker.onMerge with WF_ISSUE per #link, move to verifying, and cleanup (fi
 worktree, resources, and the branch only while its tip is the landed commit (pr mode deletes
 the remote branch under the same rule). A landing failure leaves the card where it was, with
 a note. Never moves the main checkout's HEAD. git push and gh time out after 120 s,
-tracker.onMerge after 300 s.
+tracker.onMerge after 300 s (WF_ONMERGE_TIMEOUT overrides); a timeout
+kills the call's whole process group.
 
 Exit codes (what to do next):
   0  landed (verifying), or the PR was opened or updated and the card waits in owner-review
@@ -69,9 +70,13 @@ const cleanup = config.finish?.cleanup !== false && !flags['no-cleanup'];
 const squash = config.finish?.squash !== false;
 const say = (s: string) => console.log(s);
 // `seconds` bounds a network or hook call; on expiry the result says so instead of hanging finish.
+// A bounded call runs through wf_timed in its own process group, so the timeout kills the whole
+// tree (a hook's `sleep` under `sh -c` too), not just the direct child.
+const sq = (a: string) => `'${a.replaceAll("'", `'\\''`)}'`;
 const run = (cmd: string[], cwd = root, env: Record<string, string> = {}, seconds?: number) => {
-    const r = Bun.spawnSync(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...env }, timeout: seconds ? seconds * 1000 : undefined });
-    const timedOut = !!r.exitedDueToTimeout;
+    const argv = seconds ? ['bash', '-c', '. "$0" && wf_timed "$1" = "$2" "$3"', `${SCRIPTS}lib/common.sh`, String(seconds), cwd, cmd.map(sq).join(' ')] : cmd;
+    const r = Bun.spawnSync(argv, { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...env } });
+    const timedOut = !!seconds && r.exitCode === 124;
     const err = r.stderr.toString().trim();
     return { ok: r.success, code: r.exitCode, out: r.stdout.toString().trim(), err: timedOut ? `${err}
 timed out after ${seconds} s: ${cmd.slice(0, 3).join(' ')}`.trim() : err };
@@ -191,7 +196,7 @@ if (mode === 'none') {
 const hook = config.tracker?.onMerge;
 if (hook) {
     for (const issue of card.links.filter((l) => /^#?\d+$/.test(l)).map((l) => l.replace('#', ''))) {
-        const h = run(['sh', '-c', hook], root, { WF_ISSUE: issue, WF_CARD: card.id }, 300);
+        const h = run(['sh', '-c', hook], root, { WF_ISSUE: issue, WF_CARD: card.id }, Number(process.env.WF_ONMERGE_TIMEOUT) || 300);
         say(`tracker: #${issue} ${h.ok ? 'ok' : `failed: ${why(h)}`}`);
     }
 }

@@ -203,7 +203,7 @@ wf_kill_tree() {
 # they are), stdin from /dev/null. A watchdog TERMs then
 # KILLs the whole group after SECS; the return code is then 124. The group
 # and watchdog pids go to PGFILE when given (for a caller's signal trap).
-# Turns job control on for the call (each job its own group) and restores it.
+# Turns job control on to start the jobs (each its own group) and restores it.
 wf_timed() {
     local secs="$1" log="$2" wdir="$3" cmd="$4" pgfile="${5:-}" pid wd rc=0 mark had_m=0
     case "$-" in *m*) had_m=1 ;; esac
@@ -228,10 +228,11 @@ wf_timed() {
     ) >/dev/null 2>&1 &
     wd=$!
     [ -z "$pgfile" ] || echo "$wd" >>"$pgfile"
+    # Both groups exist now; off again before the wait, so a killed job prints no "Terminated".
+    [ "$had_m" = 1 ] || set +m
     wait "$pid" || rc=$?
     kill -- "-$wd" 2>/dev/null || true
     wait "$wd" 2>/dev/null || true
-    [ "$had_m" = 1 ] || set +m
     if [ -f "$mark" ]; then
         rm -f "$mark"
         rc=124
