@@ -19,6 +19,11 @@ Prints one line per result (--json: one JSON line); all results go to .workflow/
 Exit 1 when any check fails, 2 on bad usage or no Playwright.`;
 
 const argv = process.argv.slice(2);
+// Help wins wherever it appears: nothing else runs.
+if (argv.includes('-h') || argv.includes('--help')) {
+    console.log(HELP);
+    process.exit(0);
+}
 const urls: string[] = [];
 const o: CheckOpts = { base: devBase(), expect: [], advisory: new Set(), shotDir: join(shotsDir(), 'check'), timeout: 15000 };
 let viewports = viewportsDefault();

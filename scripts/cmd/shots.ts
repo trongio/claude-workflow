@@ -17,6 +17,11 @@ Writes <dev.screenshots>/ID/manifest.json and prints one line per failing shot.
 Exit 1 when a check fails or the login flow fails, 2 on bad usage.`;
 
 const argv = process.argv.slice(2);
+// Help wins wherever it appears: nothing else runs.
+if (argv.includes('-h') || argv.includes('--help')) {
+    console.log(HELP);
+    process.exit(0);
+}
 let id = '';
 const paths: string[] = [];
 let viewports = viewportsDefault();

@@ -28,6 +28,11 @@ const die = (msg: string, code = 2): never => {
 
 // Argument parsing: flags with values, the rest positional.
 const argv = process.argv.slice(2);
+// Help wins wherever it appears: nothing else runs.
+if (argv.includes('-h') || argv.includes('--help')) {
+    console.log(HELP);
+    process.exit(0);
+}
 const flags: Record<string, string | true> = {};
 const pos: string[] = [];
 for (let i = 0; i < argv.length; i++) {
