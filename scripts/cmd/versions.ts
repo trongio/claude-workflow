@@ -123,7 +123,10 @@ export async function versions(ids: string[], refresh = false): Promise<Version[
             let source = '';
             try {
                 source = urlFor(id);
-                return { id, ...parse(id, await fetchBody(source, cache, refresh)), source, verified: today() };
+                const v = parse(id, await fetchBody(source, cache, refresh));
+                // A 0.x core dependency is a maturity question the decision record must answer.
+                if (/^0\./.test(v.version)) v.note = [v.note, 'pre-1.0'].filter(Boolean).join(', ');
+                return { id, ...v, source, verified: today() };
             } catch (err) {
                 return { id, version: '?', released: '', note: '', source, verified: '', error: (err as Error).message };
             }

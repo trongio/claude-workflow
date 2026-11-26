@@ -73,6 +73,7 @@
         "testdata/"
       ],
       "heavy": true,
+      "inner": false,
       "requires": [
         "go"
       ]
@@ -136,7 +137,7 @@
         "go.mod",
         "go.sum"
       ],
-      "release": true,
+      "inner": false,
       "requires": [
         "govulncheck"
       ]
@@ -147,7 +148,7 @@
       "when": [
         "*"
       ],
-      "release": true,
+      "inner": false,
       "cache": false,
       "requires": [
         "gitleaks"

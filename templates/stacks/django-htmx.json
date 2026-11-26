@@ -80,6 +80,7 @@
         "templates/"
       ],
       "heavy": true,
+      "inner": false,
       "requires": [
         ".venv/bin/pytest"
       ]
@@ -118,7 +119,7 @@
         "*/models/",
         "*/migrations/"
       ],
-      "release": true,
+      "inner": false,
       "requires": [
         ".venv/bin/python"
       ]
@@ -153,7 +154,7 @@
       "when": [
         "*"
       ],
-      "release": true,
+      "inner": false,
       "cache": false,
       "requires": [
         "gitleaks"

@@ -43,6 +43,7 @@ export type Gate = {
     cwd?: string;
     heavy?: boolean;
     release?: boolean;
+    inner?: boolean; // false: release-only (skipped by the inner loop)
     pending?: boolean;
     cache?: boolean;
 };
@@ -282,7 +283,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
             if (has_('vitest') || has_('jest')) {
                 const affected = has_('vitest') ? `${x} vitest run --changed "$WF_BASE" --passWithNoTests` : `${x} jest --changedSince "$WF_BASE" --passWithNoTests`;
                 add({ name: 'test', cmd: affected, when, heavy: true, release: false });
-                add({ name: 'test-full', cmd: full, when, heavy: true });
+                add({ name: 'test-full', cmd: full, when, heavy: true, inner: false });
             } else if (full) add({ name: 'test', cmd: full, when, heavy: true });
             if (s.has('lint')) add({ name: 'lint', cmd: run('lint'), when, ...(s.has('lint:fix') ? { fix: run('lint:fix') } : {}) });
             else if (has_('@biomejs/biome')) add({ name: 'biome', cmd: `${x} biome ci .`, when, fix: `${x} biome check --write .` });
@@ -290,7 +291,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
             else if (has_('typescript')) add({ name: 'typecheck', cmd: `${x} tsc --noEmit`, when, heavy: true });
             if (s.has('build')) add({ name: 'build', cmd: run('build'), when, heavy: true });
             if (s.has('format') && s.has('format:check')) add({ name: 'format', cmd: run('format:check'), when, fix: run('format') });
-            if (s.has('e2e') || s.has('test:e2e')) add({ name: 'e2e', cmd: run(s.has('e2e') ? 'e2e' : 'test:e2e'), when, heavy: true, release: true, cache: false });
+            if (s.has('e2e') || s.has('test:e2e')) add({ name: 'e2e', cmd: run(s.has('e2e') ? 'e2e' : 'test:e2e'), when, heavy: true, inner: false, cache: false });
             if (p.installed && existsSync(join(det.root, p.dir, 'node_modules'))) out.link.push(`${pre}node_modules`);
             else if (!p.installed) out.setup.push(p.dir ? `cd ${p.dir} && ${pm} install` : `${pm} install`);
         } else if (p.kind === 'php') {
@@ -302,7 +303,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
                 if (!out.testAffected && !p.dir) {
                     out.testAffected = { cmd: `${runner} {files}`, map: [{ src: 'app/*.php', tests: 'tests/*{name}Test.php' }, { src: 'src/*.php', tests: 'tests/*{name}Test.php' }] };
                     add({ name: runnerName, cmd: 'wf test-affected "$WF_BASE"', when, heavy: true, release: false });
-                    add({ name: `${runnerName}-full`, cmd: `${runner}${runner.endsWith('pest') ? ' --parallel' : ''}`, when, heavy: true });
+                    add({ name: `${runnerName}-full`, cmd: `${runner}${runner.endsWith('pest') ? ' --parallel' : ''}`, when, heavy: true, inner: false });
                 } else add({ name: runnerName, cmd: `${runner}${runner.endsWith('pest') ? ' --parallel' : ''}`, when, heavy: true });
             }
             if (has_('laravel/pint')) add({ name: 'pint', cmd: './vendor/bin/pint --test', when, fix: './vendor/bin/pint' });
@@ -318,7 +319,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
                 if (!out.testAffected && !p.dir) {
                     out.testAffected = { cmd: `${r}pytest -q {files}`, map: [{ src: '*.py', tests: 'tests/*test_{name}.py' }] };
                     add({ name: 'pytest', cmd: 'wf test-affected "$WF_BASE"', when, heavy: true, release: false });
-                    add({ name: 'pytest-full', cmd: `${r}pytest -q`, when, heavy: true });
+                    add({ name: 'pytest-full', cmd: `${r}pytest -q`, when, heavy: true, inner: false });
                 } else add({ name: 'pytest', cmd: `${r}pytest -q`, when, heavy: true });
             }
             if (has_('ruff')) add({ name: 'ruff', cmd: `${r}ruff check . && ${r}ruff format --check .`, when, fix: `${r}ruff check --fix . && ${r}ruff format .` });
@@ -329,7 +330,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
             const when = W(['*.go', 'go.mod', 'go.sum', '.golangci.y*ml']);
             // go's own test cache makes `go test ./...` affected-only; the release run disables it and adds -race.
             add({ name: 'go-test', cmd: 'go test ./...', when, heavy: true, release: false });
-            add({ name: 'go-test-full', cmd: 'go test -race -count=1 ./...', when, heavy: true });
+            add({ name: 'go-test-full', cmd: 'go test -race -count=1 ./...', when, heavy: true, inner: false });
             add({ name: 'go-vet', cmd: 'go vet ./...', when, heavy: true });
             add({ name: 'gofmt', cmd: 'test -z "$(gofmt -l .)"', when, fix: 'gofmt -w .' });
             if (['.golangci.yml', '.golangci.yaml', '.golangci.toml'].some((c) => existsSync(join(det.root, p.dir, c)))) {
@@ -339,7 +340,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
             const when = W(['*.rs', 'Cargo.toml', 'Cargo.lock']);
             // No affected-only mode for cargo: the inner loop runs unit tests only, the full suite is release-only.
             add({ name: 'cargo-test', cmd: 'cargo test --quiet --workspace --lib --bins', when, heavy: true, release: false });
-            add({ name: 'cargo-test-full', cmd: 'cargo test --quiet --workspace --all-targets', when, heavy: true });
+            add({ name: 'cargo-test-full', cmd: 'cargo test --quiet --workspace --all-targets', when, heavy: true, inner: false });
             add({ name: 'clippy', cmd: 'cargo clippy --quiet --workspace --all-targets -- -D warnings', when, heavy: true });
             add({ name: 'rustfmt', cmd: 'cargo fmt --check', when, fix: 'cargo fmt' });
         }

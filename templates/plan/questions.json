@@ -61,12 +61,12 @@
       ],
       "options": [
         {
-          "label": "Web, desktop first",
+          "label": "Web (desktop first)",
           "value": "web-desktop",
           "description": "Dense screens, keyboard, tables; still usable on a phone."
         },
         {
-          "label": "Web, phone first",
+          "label": "Web (phone first)",
           "value": "web-phone",
           "description": "Most sessions on a phone browser; installable PWA possible."
         },
@@ -76,7 +76,7 @@
           "description": "App store presence, device APIs, push."
         },
         {
-          "label": "API, CLI or hardware",
+          "label": "API / CLI / device",
           "value": "headless",
           "description": "A public API, a CLI, devices or a kiosk with no regular web UI."
         }

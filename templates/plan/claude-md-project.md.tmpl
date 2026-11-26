@@ -1,0 +1,43 @@
+# {{PROJECT}}
+
+{{PRODUCT_SUMMARY}}
+
+Stack: {{STACK_TITLE}} (decision and pinned versions in `docs/STACK.md`). UI kit: `{{UI_ID}}`.
+
+## Read first
+
+- `docs/ENGINEERING-STANDARDS.md`: normative; it outranks this file. Every rule names its enforcer.
+{{#if ui}}
+- `docs/UI-UX-STANDARDS.md`: everything a user sees. Verify by looking at screenshots in `{{WIDEST_LOCALE}}`.
+{{/if}}
+- `docs/STACK.md`: the stack decision, its revisit triggers and the version table. Never write a version
+  that is not in that table; run `wf versions ECO:NAME` instead of recalling one.
+
+## Commands
+
+- Install: `{{CMD_INSTALL}}`
+- Dev server: `{{CMD_DEV}}` ({{DEV_URL}})
+- Tests: `{{CMD_TEST}}` (agents run `wf gates`, never gate commands by hand)
+- Format: `{{CMD_FMT}}` (or `wf gates --fix`)
+
+## Layout
+
+```
+{{LAYOUT}}
+```
+
+## Hard rules
+
+- Strict types and the full gate set from day one; ratchets only shrink.
+- Authorization on every state-changing route, proven by a test on that route.
+- i18n keys only (including `aria-label`, `title`, `alt`, `sr-only`); locales: {{LOCALES}}.
+{{#if multiTenant}}
+- Tenant-scope every query: application scope plus database row-level security, both tested.
+{{/if}}
+- Log every state change in the append-only audit log as `{key, params}`.
+- One fact, one derivation: import it, never restate it.
+
+High-risk paths (two reviewers{{#if ownerReviewsHigh}} and owner review{{/if}}): {{RISK_HIGH}}.
+
+<!-- tune: project conventions discovered while building (keep this file short; details go in the standards) -->
+<!-- /tune -->

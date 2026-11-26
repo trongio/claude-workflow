@@ -1,0 +1,90 @@
+{
+  "about": "Cards every project starts with. `wf plan cards FILE.json` prepends these (in order, skipping any whose `if` flag is false or whose key the planner's file already uses) to the planner's milestones. `{{...}}` values are filled from the brief.",
+  "first": [
+    {
+      "key": "scaffold",
+      "title": "Scaffold the {{STACK_TITLE}} app with every gate green on the empty project",
+      "size": "M",
+      "area": "infra",
+      "milestone": true,
+      "goal": "A fresh clone installs, boots and passes `wf gates --release` with no pending gates.",
+      "acceptance": [
+        "The app boots at {{DEV_URL}} from the documented install and dev commands",
+        "Every gate in .claude/workflow.json is installed and green; `pending` is removed from each (`wf plan unpend`)",
+        "Strictness flags from docs/ENGINEERING-STANDARDS.md stack rules are on, with zero baseline entries",
+        "`wf doctor` reports no failures"
+      ]
+    },
+    {
+      "key": "release-gate",
+      "title": "Release gate script: one command that proves a commit is mergeable",
+      "size": "S",
+      "area": "infra",
+      "milestone": true,
+      "depends": [
+        "scaffold"
+      ],
+      "goal": "One project command (make ci / just ci / a script) runs the full gate set with pipefail and a log, and `release.cmd` in workflow.json points at it.",
+      "acceptance": [
+        "The command exits non-zero when any gate fails or a required tool is missing (missing is never green)",
+        "It writes a log with the revision, each gate's exit code and timing",
+        "`wf gates --release` runs it"
+      ]
+    },
+    {
+      "key": "design-system",
+      "if": "ui",
+      "title": "Design tokens, component catalog and the /dev/gallery page",
+      "size": "M",
+      "area": "ui",
+      "milestone": true,
+      "depends": [
+        "scaffold"
+      ],
+      "goal": "Tokens for colour, space, type and status in one file; CATALOG.md; a dev-only gallery that renders every component in every variant and state.",
+      "acceptance": [
+        "Tokens cover colour (semantic and status), spacing, radius, type scale, line height and z-index, in light and dark",
+        "The tokens gate passes and fails on a planted hex colour",
+        "The gallery renders in {{WIDEST_LOCALE}} at 375 px and 1440 px with no clipping, verified by looking at the screenshots",
+        "The UI kit's known traps (docs/UI-UX-STANDARDS.md) are fixed in the generated primitives, including translated sr-only text"
+      ]
+    },
+    {
+      "key": "auth",
+      "if": "auth",
+      "title": "Auth{{#if multiTenant}} and tenancy{{/if}} skeleton with authorization and audit proven by tests",
+      "size": "L",
+      "area": "auth",
+      "milestone": true,
+      "depends": [
+        "scaffold"
+      ],
+      "goal": "Sign-in, roles and permissions{{#if multiTenant}}, tenant isolation (app scope + row-level security){{/if}} and the audit log, each enforced by a guard test.",
+      "acceptance": [
+        "A route-table guard test fails when a state-changing route has no authorization",
+        "A refused user gets 403 on every state-changing route, child routes included",
+        "{{#if multiTenant}}A foreign tenant's rows are invisible and unwritable, proven per table{{/if}}",
+        "Every state change writes an append-only audit entry as {key, params}"
+      ]
+    },
+    {
+      "key": "slice",
+      "title": "First vertical slice: {{FIRST_JOB}}",
+      "size": "L",
+      "area": "core",
+      "milestone": true,
+      "depends": [
+        "scaffold",
+        "design-system",
+        "auth"
+      ],
+      "goal": "The first core job works end to end for a real user: data, rules, UI, i18n, tests and the audit trail.",
+      "acceptance": [
+        "A user completes the job in the dev app; verified by looking in {{WIDEST_LOCALE}} at 375 px and 1440 px",
+        "Empty, loading, error and refused states are designed and shown",
+        "The list endpoint has a query-count test; the write has an authorization test",
+        "All gates green via `wf gates --release`"
+      ]
+    }
+  ]
+}

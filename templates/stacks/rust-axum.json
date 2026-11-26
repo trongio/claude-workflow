@@ -75,6 +75,7 @@
         "tests/"
       ],
       "heavy": true,
+      "inner": false,
       "requires": [
         "cargo"
       ]
@@ -114,7 +115,7 @@
         "migrations/",
         ".sqlx/"
       ],
-      "release": true,
+      "inner": false,
       "requires": [
         "cargo-sqlx"
       ]
@@ -127,7 +128,7 @@
         "Cargo.lock",
         "deny.toml"
       ],
-      "release": true,
+      "inner": false,
       "requires": [
         "cargo-deny"
       ]
@@ -138,7 +139,7 @@
       "when": [
         "*"
       ],
-      "release": true,
+      "inner": false,
       "cache": false,
       "requires": [
         "gitleaks"

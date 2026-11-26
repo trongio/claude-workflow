@@ -88,6 +88,7 @@
         "package-lock.json"
       ],
       "heavy": true,
+      "inner": false,
       "requires": [
         "node_modules/.bin/vitest"
       ]
@@ -168,7 +169,7 @@
         "package.json",
         "package-lock.json"
       ],
-      "release": true,
+      "inner": false,
       "requires": [
         "node_modules/.bin/jscpd"
       ]
@@ -202,7 +203,7 @@
         "tests/e2e/"
       ],
       "heavy": true,
-      "release": true,
+      "inner": false,
       "cache": false,
       "requires": [
         "node_modules/.bin/playwright"
@@ -215,7 +216,7 @@
         "src/db/",
         "drizzle.config.*"
       ],
-      "release": true,
+      "inner": false,
       "requires": [
         "node_modules/.bin/drizzle-kit"
       ]
@@ -236,7 +237,7 @@
       "when": [
         "*"
       ],
-      "release": true,
+      "inner": false,
       "cache": false,
       "requires": [
         "gitleaks"

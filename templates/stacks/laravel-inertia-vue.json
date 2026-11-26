@@ -1,7 +1,7 @@
 {
   "id": "laravel-inertia-vue",
   "title": "Laravel + Inertia + Vue (TypeScript)",
-  "summary": "Laravel monolith with Inertia v-next and Vue 3 + TypeScript: server-side routing, auth, queues, i18n and policies built in; typed client pages without a separate API.",
+  "summary": "Laravel monolith with Inertia and Vue 3 + TypeScript: server-side routing, auth, queues, i18n and policies built in; typed client pages without a separate API.",
   "fits": [
     "B2B SaaS and internal tools with forms, tables and admin flows",
     "multi-tenant apps (policies, global scopes, Postgres RLS)",
@@ -100,6 +100,7 @@
         "database/"
       ],
       "heavy": true,
+      "inner": false,
       "requires": [
         "vendor/bin/pest"
       ]
@@ -160,6 +161,7 @@
         "package-lock.json"
       ],
       "heavy": true,
+      "inner": false,
       "requires": [
         "node_modules/.bin/vitest"
       ]
@@ -245,7 +247,7 @@
         "package.json",
         "package-lock.json"
       ],
-      "release": true,
+      "inner": false,
       "requires": [
         "node_modules/.bin/jscpd"
       ]
@@ -281,7 +283,7 @@
         "tests/e2e/"
       ],
       "heavy": true,
-      "release": true,
+      "inner": false,
       "cache": false,
       "requires": [
         "node_modules/.bin/playwright"
@@ -303,7 +305,7 @@
       "when": [
         "*"
       ],
-      "release": true,
+      "inner": false,
       "cache": false,
       "requires": [
         "gitleaks"
