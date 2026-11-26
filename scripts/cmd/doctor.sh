@@ -9,7 +9,10 @@
 # be running yet; FAIL with --strict); stale locks; leftovers (merged or done
 # worktrees, ledger entries without a live worktree, merged wf/* branches,
 # orphan databases, processes outliving their worktree); docs/STACK.md newer
-# than 90 days. Prints problems only. Exit 1 when anything fails.
+# than 90 days. Warnings (never failures without --strict): finish.mode pr
+# without push: true, queue files for cards that are no longer todo, a runner
+# state.json marked active whose pid is gone. Prints problems only. Exit 1
+# when anything fails.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,7 +24,7 @@ for a in "$@"; do
     case "$a" in
     --strict) strict=1 ;;
     -h | --help)
-        sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//'
+        wf_help "$0"
         exit 0
         ;;
     *)
@@ -113,6 +116,34 @@ else
             (cd "$root/$cwd" 2>/dev/null && command -v "$word" >/dev/null) || bad "gate $name: $word is not installed"
         fi
     done < <(jq -r '.gates // [] | .[] | [.name, (.cwd // "."), (.pending // false | tostring), .cmd] | @tsv' "$cfg")
+fi
+
+# Landing config: pr mode pushes, so it needs push: true.
+if [ -f "$cfg" ] && jq -e '((.finish.mode // "pr") == "pr") and (.push != true)' "$cfg" >/dev/null 2>&1; then
+    check
+    warn "finish.mode is pr but push is not true: wf finish cannot open the PR (set push: true, or finish.mode merge|none)"
+fi
+
+# Runner leftovers: queue files for cards no longer todo (while no runner is
+# live: a running card is in progress), a dead active runner.
+if [ -d "$main/.workflow/queue" ] && ! kill -0 "$(cat "$main/.workflow/.runner.lock/pid" 2>/dev/null || echo x)" 2>/dev/null; then
+    check
+    declare -A st=()
+    while read -r id status _; do st[$id]="$status"; done < <("$here/../bin/wf" list 2>/dev/null)
+    for f in "$main"/.workflow/queue/*.task; do
+        [ -e "$f" ] || continue
+        id="$(basename "$f" .task)"
+        [ "${st[$id]:-}" = todo ] && continue
+        warn "stale queue file $f (card $id is ${st[$id]:-not active}): rm '$f' or wf move $id todo"
+    done
+fi
+state="$main/.workflow/runner/state.json"
+if [ -f "$state" ] && jq -e '.active == true' "$state" >/dev/null 2>&1; then
+    check
+    pid="$(jq -r '.pid // empty' "$state")"
+    if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+        warn "runner state $state says active but pid ${pid:-unknown} is gone (a killed runner): wf run resumes, or set active false"
+    fi
 fi
 
 # 3. Hooks.

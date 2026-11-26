@@ -7,7 +7,9 @@
 #   main checkout's too (never killed). `stale` = its worktree was removed.
 #   --kill ID|DIR stops only the processes inside that worktree; --kill --all
 #   stops every listed one. A bare --kill refuses: parallel sessions' servers
-#   and runners would die with it.
+#   and runners would die with it. Never killed: children of a live claude
+#   process (MCP servers, a running session's tools; listed as `under claude`)
+#   and the caller's own ancestors. --json --kill kills, then prints the JSON.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -29,7 +31,7 @@ while [ $# -gt 0 ]; do
         ;;
     --json) json=1 ;;
     -h | --help)
-        sed -n '4,10p' "$0" | sed 's/^# \{0,1\}//'
+        wf_help "$0"
         exit 0
         ;;
     *)
@@ -75,21 +77,6 @@ done
 
 re='node|vite|next|nuxt|webpack|esbuild|tsx|bun|deno|php|artisan|pest|phpunit|vitest|jest|playwright|chrom|firefox|webkit|go|air|python|uvicorn|gunicorn|pytest|cargo|ruby|rails|puma|java|gradle|frankenphp|caddy|npm|pnpm|yarn'
 
-# pid<TAB>cwd for every process we can see.
-proc_cwds() {
-    if [ -d /proc/self ] && find /proc/self/cwd -maxdepth 0 -printf '' 2>/dev/null; then
-        # One process for all pids (GNU find), instead of a readlink per pid.
-        find /proc/[0-9]*/cwd -maxdepth 0 -printf '%p\t%l\n' 2>/dev/null | sed 's|^/proc/\([0-9]*\)/cwd|\1|' || true
-    elif [ -d /proc/self ]; then
-        local d c
-        for d in /proc/[0-9]*; do
-            c="$(readlink "$d/cwd" 2>/dev/null)" || continue
-            printf '%s\t%s\n' "${d#/proc/}" "$c"
-        done
-    elif command -v lsof >/dev/null; then
-        lsof -nP -d cwd -Fpn 2>/dev/null | awk '/^p/ { p = substr($0, 2) } /^n/ { print p "\t" substr($0, 2) }'
-    fi
-}
 ports_of() {
     if command -v ss >/dev/null; then
         ss -Hltnp 2>/dev/null | { grep -E "pid=$1[,)]" || true; } | awk '{ n = split($4, a, ":"); print a[n] }' | sort -u | paste -sd, -
@@ -127,11 +114,43 @@ done < <(
     # Only lines that can match: cwd under main (worktrees dir) or a worktree.
     pre=(-e "$main/")
     for w in "${wts[@]}"; do pre+=(-e "$w/" -e "$w (deleted)"); done
-    proc_cwds | sed 's|$|/|' | { grep -F "${pre[@]}" || true; } | sed 's|/$||'
+    wf_proc_cwds | sed 's|$|/|' | { grep -F "${pre[@]}" || true; } | sed 's|/$||'
 )
 
+# Processes with a claude ancestor (MCP servers, a live session's tools): one ps snapshot.
+declare -A ppid_of=() comm_of=()
+while read -r p pp c; do
+    ppid_of[$p]="$pp" comm_of[$p]="$c"
+done < <(ps -A -o pid= -o ppid= -o comm= 2>/dev/null)
+under_claude() {
+    local p="${ppid_of[$1]:-}" n=0
+    while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$n" -lt 64 ]; do
+        [[ "${comm_of[$p]:-}" =~ ^claude ]] && return 0
+        p="${ppid_of[$p]:-}"
+        n=$((n + 1))
+    done
+    return 1
+}
+
+killed=0 kept=0
+for i in "${!rows[@]}"; do
+    IFS="$us" read -r pid ports cwd age comm stale hit <<<"${rows[$i]}"
+    owned=false
+    under_claude "$pid" && owned=true
+    rows[i]="${rows[$i]}$us$owned"
+    [ "$kill_them" = 1 ] && [ "$hit" != "$main" ] || continue
+    if [ "$owned" = true ]; then
+        kept=$((kept + 1))
+    else
+        wf_kill_tree "$pid"
+        killed=$((killed + 1))
+    fi
+done
+report="orphans: stopped $killed$([ "$kept" = 0 ] || echo ", kept $kept under a claude process")"
+
 if [ "$json" = 1 ]; then
-    printf '%s\n' "${rows[@]}" | jq -Rc 'select(. != "") | split("\u001f") | {pid: (.[0] | tonumber), ports: .[1], cwd: .[2], age: .[3], cmd: .[4], stale: (.[5] == "true"), worktree: .[6]}' | jq -sc .
+    printf '%s\n' "${rows[@]}" | jq -Rc 'select(. != "") | split("\u001f") | {pid: (.[0] | tonumber), ports: .[1], cwd: .[2], age: .[3], cmd: .[4], stale: (.[5] == "true"), worktree: .[6], underClaude: (.[7] == "true")}' | jq -sc .
+    [ "$kill_them" = 0 ] || echo "$report" >&2
     exit 0
 fi
 if [ "${#rows[@]}" -eq 0 ]; then
@@ -139,15 +158,9 @@ if [ "${#rows[@]}" -eq 0 ]; then
     exit 0
 fi
 printf '%-8s %-12s %-10s %-12s %s\n' pid port age cmd cwd
-killed=0
 for r in "${rows[@]}"; do
-    IFS="$us" read -r pid ports cwd age comm stale hit <<<"$r"
-    printf '%-8s %-12s %-10s %-12s %s%s\n' "$pid" "${ports:--}" "$age" "$comm" "$cwd" "$([ "$stale" = true ] && echo "  (stale)")"
-    [ "$hit" = "$main" ] && continue
-    if [ "$kill_them" = 1 ]; then
-        wf_kill_tree "$pid"
-        killed=$((killed + 1))
-    fi
+    IFS="$us" read -r pid ports cwd age comm stale hit owned <<<"$r"
+    printf '%-8s %-12s %-10s %-12s %s%s%s\n' "$pid" "${ports:--}" "$age" "$comm" "$cwd" "$([ "$stale" = true ] && echo "  (stale)")" "$([ "$owned" = true ] && echo "  (under claude)")"
 done
-[ "$kill_them" = 0 ] || echo "orphans: stopped $killed"
+[ "$kill_them" = 0 ] || echo "$report"
 exit 0
