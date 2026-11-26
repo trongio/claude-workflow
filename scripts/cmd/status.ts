@@ -36,5 +36,5 @@ const cut = (s: string, n = 70) => (s.length > n ? `${s.slice(0, n - 1)}~` : s);
 block('in flight', inFlight, (t) => `${t.id.padEnd(8)} ${t.status.padEnd(12)} ${age(t).padStart(4)}  ${cut(t.title, 50)}`, 6);
 block('waiting on owner', owner, (t) => `${t.id.padEnd(8)} ${cut(t.blocked || 'review and decide')}`, 6);
 block('verifying', verifying, (t) => `${t.id.padEnd(8)} since ${t.landed ?? '?'}  ${cut(t.title, 50)}`, 4);
-if (leftovers.length) out.push(`leftovers: ${leftovers.slice(0, 8).join(', ')}${leftovers.length > 8 ? ` +${leftovers.length - 8}` : ''} (wf prune / wf_teardown)`);
+if (leftovers.length) out.push(`leftovers: ${leftovers.slice(0, 8).join(', ')}${leftovers.length > 8 ? ` +${leftovers.length - 8}` : ''} (run wf prune)`);
 console.log(out.slice(0, 25).join('\n'));

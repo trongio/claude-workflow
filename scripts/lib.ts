@@ -21,6 +21,7 @@ export type Card = {
     landed?: string;
     done?: string;
     verified?: string;
+    ownerApproved?: string;
     branch?: string;
     acceptance: { done: number; total: number };
     body: string;
@@ -39,6 +40,8 @@ export type Config = {
     finish?: { mode?: 'pr' | 'merge' | 'none'; squash?: boolean; autoMerge?: boolean; cleanup?: boolean };
     tracker?: { kind?: string; requireLink?: boolean; onMerge?: string };
     risk?: { high?: string[] };
+    review?: { ownerHoldHigh?: boolean; [key: string]: unknown };
+    push?: boolean;
     docs?: { standards?: string[]; spec?: string[]; design?: string[] };
     [key: string]: unknown;
 };
@@ -98,13 +101,15 @@ export const BOARD_PORT = 8095;
 // Card tags the unattended runner never picks up.
 export const OVERNIGHT_EXCLUDE = config.overnight?.exclude ?? ['migration', 'deploy', 'hardware'];
 
-// Default id prefix from the repo name: initials of its words (claude-workflow -> CW), or its first 3 letters.
-export function idPrefix(): string {
-    if (config.idPrefix) return config.idPrefix;
-    const words = basename(root.replace(/\/$/, '')).split(/[^A-Za-z0-9]+/).filter(Boolean);
+// Id prefix from a name: initials of its words (claude-workflow -> CW, "Acme Billing" -> AB), or its first 3 letters.
+export function prefixFrom(name: string): string {
+    const words = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
     const p = words.length > 1 ? words.map((w) => w[0]).join('').slice(0, 4) : (words[0] ?? 'wf').slice(0, 3);
     return /^[A-Za-z]/.test(p) ? p.toUpperCase() : `WF${p}`.toUpperCase();
 }
+
+// The configured id prefix, else one from the repo name.
+export const idPrefix = (): string => config.idPrefix || prefixFrom(basename(root.replace(/\/$/, '')));
 
 export const milestoneLabel = (): string => config.milestone?.label ?? 'milestone';
 
@@ -138,7 +143,7 @@ export function parseCard(text: string, file: string, withBody = true): Card | n
     if (!m) return null;
     const meta: Record<string, unknown> = {};
     for (const line of m[1].split('\n')) {
-        const kv = line.match(/^(\w+):\s?(.*)$/);
+        const kv = line.match(/^([\w-]+):\s?(.*)$/);
         if (kv) meta[kv[1]] = parseValue(kv[2]);
     }
     if (!meta.id) return null;
@@ -165,6 +170,7 @@ export function parseCard(text: string, file: string, withBody = true): Card | n
         landed: str('landed'),
         done: str('done'),
         verified: str('verified'),
+        ownerApproved: str('owner-approved'),
         branch: str('branch'),
         acceptance: { done: checks.filter((c) => /\[[xX]\]/.test(c)).length, total: checks.length },
         body,
@@ -296,23 +302,29 @@ export function archivePath(file: string, status?: string): string {
 export const byPriority = (a: Card, b: Card) =>
     Number(b.milestone) - Number(a.milestone) || a.priority - b.priority || a.id.localeCompare(b.id, undefined, { numeric: true });
 
-// Claimable: todo, unblocked, every dependency landed. Prefer areas nobody is
-// working in, so parallel workstreams rarely touch the same files.
-export function claimable(cards: Card[], n: number, ignoreWip = false): Card[] {
+// Claimable: todo, unblocked, every dependency landed; `exclude` drops cards
+// carrying one of those tags (the unattended runner's overnight.exclude).
+// Milestone cards always come before the rest; within each tier, prefer areas
+// nobody is working in, so parallel workstreams rarely touch the same files.
+export function claimable(cards: Card[], n: number, ignoreWip = false, exclude: string[] = []): Card[] {
     const landed = new Set(cards.filter((t) => LANDED.includes(t.status)).map((t) => t.id));
     const busy = new Set(ignoreWip ? [] : cards.filter((t) => ACTIVE.includes(t.status)).map((t) => t.area));
-    const ready = cards.filter((t) => t.status === 'todo' && !t.blocked && t.depends.every((d) => landed.has(d))).sort(byPriority);
+    const ready = cards
+        .filter((t) => t.status === 'todo' && !t.blocked && t.depends.every((d) => landed.has(d)) && !t.tags.some((g) => exclude.includes(g)))
+        .sort(byPriority);
     const picked: Card[] = [];
-    for (const t of ready) {
-        if (picked.length >= n) break;
-        if (!busy.has(t.area)) {
-            picked.push(t);
-            busy.add(t.area);
+    for (const tier of [ready.filter((t) => t.milestone), ready.filter((t) => !t.milestone)]) {
+        for (const t of tier) {
+            if (picked.length >= n) break;
+            if (!busy.has(t.area)) {
+                picked.push(t);
+                busy.add(t.area);
+            }
         }
-    }
-    for (const t of ready) {
-        if (picked.length >= n) break;
-        if (!picked.includes(t)) picked.push(t);
+        for (const t of tier) {
+            if (picked.length >= n) break;
+            if (!picked.includes(t)) picked.push(t);
+        }
     }
     return picked;
 }
@@ -332,24 +344,53 @@ process.on('exit', () => {
     for (const d of held) rmSync(d, { recursive: true, force: true });
 });
 
-function stale(dir: string): boolean {
+// The inode of a stale lock dir (owner dead, or no pid file and older than 10 s), else 0.
+function staleInode(dir: string): number {
+    let st: ReturnType<typeof statSync>;
+    try {
+        st = statSync(dir);
+    } catch {
+        return 0;
+    }
     let pid = 0;
     try {
         pid = Number(readFileSync(`${dir}/pid`, 'utf8'));
     } catch {
         // No pid yet: the owner may be between mkdir and write, so only an old dir is stale.
-        try {
-            return Date.now() - statSync(dir).mtimeMs > 10_000;
-        } catch {
-            return false;
-        }
+        return Date.now() - st.mtimeMs > 10_000 ? st.ino : 0;
     }
     try {
         process.kill(pid, 0);
-        return false;
+        return 0;
     } catch (err) {
-        return (err as NodeJS.ErrnoException).code !== 'EPERM';
+        return (err as NodeJS.ErrnoException).code !== 'EPERM' ? st.ino : 0;
     }
+}
+
+// Takes over a stale lock atomically: rename it aside, then check the renamed
+// dir is the one judged stale. Two waiters may both judge one lock stale; the
+// second rename then catches the first waiter's FRESH lock (another inode) and
+// puts it back instead of deleting it.
+export function takeOver(dir: string, ino: number): boolean {
+    const aside = `${dir}.stale.${process.pid}.${Math.random().toString(36).slice(2)}`;
+    try {
+        renameSync(dir, aside);
+    } catch {
+        return false; // someone else moved it first
+    }
+    let same = false;
+    try {
+        same = statSync(aside).ino === ino;
+    } catch {}
+    if (same) rmSync(aside, { recursive: true, force: true });
+    else {
+        try {
+            renameSync(aside, dir);
+        } catch {
+            rmSync(aside, { recursive: true, force: true });
+        }
+    }
+    return same;
 }
 
 export function withLock<T>(fn: () => T, name = 'cards', tries = 200): T {
@@ -361,8 +402,9 @@ export function withLock<T>(fn: () => T, name = 'cards', tries = 200): T {
             writeFileSync(`${dir}/pid`, String(process.pid));
             break;
         } catch {
-            if (stale(dir)) {
-                rmSync(dir, { recursive: true, force: true });
+            const ino = staleInode(dir);
+            if (ino) {
+                takeOver(dir, ino);
                 continue;
             }
             if (i >= tries) fail(`card lock busy (${dir})`);
@@ -429,9 +471,20 @@ export function globsToRegex(globs: string[]): RegExp {
 }
 
 export const LIGHT_GLOBS = ['*.md', 'docs/', 'tests/', '*.css'];
+// High risk out of the box: schema and data migrations, auth, money, security,
+// infrastructure and deploys. A risk.high list in the config replaces these.
+export const DEFAULT_HIGH = [
+    'migrations/', '*/migrations/*', '*.sql', 'schema.prisma', '*/schema.prisma', 'schema.rb', '*/schema.rb', '*schema.graphql',
+    'auth/', '*/auth/*', 'auth.*', '*/auth.*', 'billing/', '*/billing/*', 'payment*', '*/payment*', 'payments/', '*/payments/*',
+    'security/', '*/security/*', 'infra/', '*/infra/*', 'deploy/', '*/deploy/*', '.github/workflows/', 'Dockerfile*', '*/Dockerfile*',
+];
+export function highGlobs(): { globs: string[]; source: 'config' | 'built-in' } {
+    const high = config.risk?.high;
+    return Array.isArray(high) ? { globs: high, source: 'config' } : { globs: DEFAULT_HIGH, source: 'built-in' };
+}
 export type Risk = { level: 'high' | 'standard' | 'light'; file: string };
 
-export function classifyRisk(files: string[], high: string[] = config.risk?.high ?? []): Risk {
+export function classifyRisk(files: string[], high: string[] = highGlobs().globs): Risk {
     const hi = globsToRegex(high);
     const light = globsToRegex(LIGHT_GLOBS);
     const h = high.length ? files.find((f) => hi.test(f)) : undefined;
@@ -475,10 +528,11 @@ export function readJson(path: string): unknown {
 
 // ---------------------------------------------------------------- teardown
 
-// Removes a task's worktree and local branch through stream 2's wf_teardown
-// (teardown commands, previews, ports, resource ledger) when it exists, else
-// plain git. Returns what was cleaned, e.g. ["worktree", "branch", "db"].
-export function teardown(dir: string | undefined, branch: string): { cleaned: string[]; error?: string } {
+// Removes a task's worktree and local branch through wf_teardown (teardown
+// commands, previews, ports, resource ledger) when it exists, else plain git.
+// keepBranch removes only the worktree (a PR still waiting on review).
+// Returns what was cleaned, e.g. ["worktree", "branch"].
+export function teardown(dir: string | undefined, branch: string, opts: { keepBranch?: boolean } = {}): { cleaned: string[]; error?: string } {
     const script = `. "$1/lib/common.sh"
 if declare -f wf_teardown >/dev/null; then wf_teardown "$2"; exit; fi
 if [ -n "$2" ] && [ -d "$2" ]; then
@@ -486,31 +540,55 @@ if [ -n "$2" ] && [ -d "$2" ]; then
     if [ -n "$(git -C "$2" status --porcelain --untracked-files=no)" ]; then echo "$2 has uncommitted changes; left in place" >&2; exit 1; fi
     git worktree remove --force "$2" || exit 1
 fi
-if git show-ref --verify --quiet "refs/heads/$3"; then git branch -D "$3" >/dev/null; fi`;
+if [ -z "$4" ] && git show-ref --verify --quiet "refs/heads/$3"; then git branch -D "$3" >/dev/null; fi`;
+    const ref = `refs/heads/${branch}`;
+    const sha = git(['rev-parse', '--verify', '--quiet', ref]).out;
     const hadDir = !!dir && existsSync(dir);
-    const hadBranch = git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
-    const r = Bun.spawnSync(['bash', '-c', script, 'teardown', SCRIPTS.replace(/\/$/, ''), dir ?? '', branch], { cwd: root, stdout: 'pipe', stderr: 'pipe' });
+    const r = Bun.spawnSync(['bash', '-c', script, 'teardown', SCRIPTS.replace(/\/$/, ''), dir ?? '', branch, opts.keepBranch ? '1' : ''], {
+        cwd: root, stdout: 'pipe', stderr: 'pipe',
+    });
+    // wf_teardown deletes a branch it sees as merged; a kept branch is put back where it was.
+    if (opts.keepBranch && sha && !git(['show-ref', '--verify', '--quiet', ref]).ok) git(['branch', branch, sha]);
+    const cleaned: string[] = [];
+    if (hadDir && !existsSync(dir as string)) cleaned.push('worktree');
+    if (sha && !git(['show-ref', '--verify', '--quiet', ref]).ok) cleaned.push('branch');
     const out = r.stdout.toString();
-    const reported = out.match(/^cleaned:\s*(.*)$/m)?.[1];
-    const cleaned = reported ? reported.split(/,\s*/).filter(Boolean) : [];
-    if (!reported) {
-        if (hadDir && !existsSync(dir as string)) cleaned.push('worktree');
-        if (hadBranch && !git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).ok) cleaned.push('branch');
-    }
-    return { cleaned, error: r.success ? undefined : (r.stderr.toString().trim().split('\n').pop() ?? 'teardown failed') };
+    if (/^stopped pid/m.test(out)) cleaned.push('processes');
+    return { cleaned, error: r.success ? undefined : tail(r.stderr.toString() || out) || 'teardown failed' };
 }
 
-// Resource ledger written by stream 2: card ids holding a db, port or preview.
+// Card ids holding resources in the ledger written by wt-init and wf preview:
+// <git common dir>/workflow-resources.json = {"worktrees": {"<abs dir>": {id|card, branch, ...}}}.
 export function ledgerCards(): string[] {
     const common = existsSync(`${root}.git/HEAD`) ? `${root}.git` : git(['rev-parse', '--path-format=absolute', '--git-common-dir']).out;
-    const json = readJson(`${common}/workflow-resources.json`);
-    if (!json || typeof json !== 'object') return [];
-    const ids = (list: Record<string, unknown>[]) => [...new Set(list.map((e) => String(e.card ?? e.id ?? '')).filter(Boolean))];
-    if (Array.isArray(json)) return ids(json);
-    const o = json as Record<string, unknown>;
-    if (Array.isArray(o.entries)) return ids(o.entries);
-    if (o.cards && typeof o.cards === 'object') return Object.keys(o.cards);
-    return Object.keys(o);
+    const json = readJson(`${common}/workflow-resources.json`) as { worktrees?: Record<string, Record<string, unknown>> } | undefined;
+    const wts = json && typeof json === 'object' && json.worktrees && typeof json.worktrees === 'object' ? json.worktrees : {};
+    const ids = Object.entries(wts).map(([path, e]) => String(e?.card ?? e?.id ?? (path.match(/\/\.workflow\/worktrees\/([^/]+)\/?$/)?.[1] ?? '')));
+    return [...new Set(ids.filter(Boolean))];
+}
+
+// Commits tasks/ in the main checkout (wf cards-commit). A run with nothing to
+// commit commits nothing, so retries never stack duplicate commits.
+export function cardsCommit(msg: string): { ok: boolean; out: string } {
+    const r = Bun.spawnSync(['bash', `${SCRIPTS}cmd/cards-commit.sh`, '-m', msg], { cwd: root, stdout: 'pipe', stderr: 'pipe' });
+    const out = r.stdout.toString().trim();
+    return { ok: r.success, out: r.success ? out : tail(`${out}\n${r.stderr.toString()}`) };
+}
+
+// The last n non-empty lines of a command's output: enough to see why it failed.
+export const tail = (text: string, n = 5): string => text.split('\n').map((l) => l.trimEnd()).filter(Boolean).slice(-n).join('\n');
+
+// Help text from a command file's header comment: every comment line after the
+// shebang and the `wf-help:` line, up to the first line of code.
+export function headerHelp(file: string): string {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    const out: string[] = [];
+    for (const l of lines.slice(1)) {
+        if (/^\/\/ wf-help:/.test(l)) continue;
+        if (!/^\/\/( |$)/.test(l)) break;
+        out.push(l.replace(/^\/\/ ?/, ''));
+    }
+    return out.join('\n');
 }
 
 // ---------------------------------------------------------------- args

@@ -3,8 +3,10 @@
 //
 //   list [status] [--milestone]     one line per active card
 //   next [n]                        the next n claimable cards, no side effects
-//   claim [n] | claim <ID> [--dry-run]   claim up to n cards (default: WIP limit) or one named card
-//   move <ID> <status> [--branch b] [--blocked "text"|""] [--verified "how"] [--force]
+//   claim [n] | claim <ID> [--dry-run] [--headless]   claim up to n cards (default: WIP limit) or one named card;
+//                                   --headless (the overnight runner) skips cards tagged overnight.exclude
+//   move <ID> <status> [--branch b] [--blocked "text"|""] [--verified "how"] [--approve] [--force]
+//                                   --approve records owner-approved (lets a high-risk card land); done commits the card
 //   new "<title>" [--size M] [--area x] [--milestone] [--status todo] [--priority 2] [--depends A-1,A-2] [--links "#12"] [--tags a,b]
 //   prio <ID> <n> [<ID> <n> ...]    set priority (lower runs first)
 //   show <ID>                       print the card file
@@ -15,18 +17,20 @@
 // More card commands (start, finish, outcome, status, ...) live in scripts/cmd/; `wf help` lists them.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import {
-    ACTIVE, CARD_ID, DAY, LANDED, OVERNIGHT_BATCH, OVERNIGHT_EXCLUDE, STATUSES, WIP, type Card, byPriority, claimable, config, fail, findCard,
+    ACTIVE, CARD_ID, DAY, cardsCommit, LANDED, OVERNIGHT_BATCH, OVERNIGHT_EXCLUDE, STATUSES, WIP, type Card, byPriority, claimable, config, fail, findCard,
     idPrefix, milestoneLabel, readCards, root, taskBranch, teardown, today, unknownDepends, update, withLock, worktreeOf,
 } from './lib.ts';
 
 const [cmd = 'list', ...rest] = process.argv.slice(2);
 const flags: Record<string, string | true> = {};
 const args: string[] = [];
+// Switches never take a value, so `claim --headless T-1` keeps T-1 as the argument.
+const SWITCHES = ['milestone', 'mvp', 'dry-run', 'headless', 'approve', 'force'];
 for (let i = 0; i < rest.length; i++) {
     if (rest[i].startsWith('--')) {
         const key = rest[i].slice(2);
         const next = rest[i + 1];
-        flags[key] = next === undefined || next.startsWith('--') ? true : (i++, next);
+        flags[key] = SWITCHES.includes(key) || next === undefined || next.startsWith('--') ? true : (i++, next);
     } else args.push(rest[i]);
 }
 if (flags.mvp) flags.milestone = flags.mvp;
@@ -73,10 +77,12 @@ switch (cmd) {
             if (!Number.isInteger(n) || n < 1) fail('usage: claim [n] | claim <ID> [--dry-run]');
             const slots = Math.min(n, WIP - active);
             if (slots <= 0) fail(`WIP limit reached: ${active} active (limit ${WIP}). Finish or move one first.`);
+            const exclude = flags.headless ? OVERNIGHT_EXCLUDE : [];
             const picked = byId
-                ? claimable(fresh, Infinity).filter((t) => t.id.toUpperCase() === args[0].toUpperCase())
-                : claimable(fresh, slots);
-            if (byId && !picked.length) fail(`${args[0]} is not claimable (needs status todo, unblocked, dependencies landed)`);
+                ? claimable(fresh, Infinity, false, exclude).filter((t) => t.id.toUpperCase() === args[0].toUpperCase())
+                : claimable(fresh, slots, false, exclude);
+            if (byId && !picked.length)
+                fail(`${args[0]} is not claimable (needs status todo, unblocked, dependencies landed${exclude.length ? `, no tag in overnight.exclude: ${exclude.join(', ')}` : ''})`);
             if (!picked.length) fail('nothing claimable: no unblocked todo card with its dependencies landed');
             for (const t of picked) {
                 if (!flags['dry-run']) update(t, { status: 'in-progress', started: today() });
@@ -97,11 +103,12 @@ switch (cmd) {
             fields.done = today();
         }
         if (typeof flags.verified === 'string') fields.verified = flags.verified;
+        if (flags.approve) fields['owner-approved'] = today();
         if (status === 'verifying' && !t.landed) fields.landed = today();
         if (ACTIVE.includes(status) && !t.started) fields.started = today();
         if (typeof flags.branch === 'string') fields.branch = flags.branch;
         if ('blocked' in flags) fields.blocked = flags.blocked === true ? '' : flags.blocked;
-        console.log(`${t.id} ${t.status} -> ${status}  ${update(t, fields)}`);
+        console.log(`${t.id} ${t.status} -> ${status}  ${update(t, fields)}${flags.approve ? ' (owner-approved)' : ''}`);
         // A card leaving the active flow takes its worktree, branch and resources with it.
         if (status === 'done' || status === 'backlog') {
             const dir = worktreeOf(taskBranch(t));
@@ -110,6 +117,12 @@ switch (cmd) {
                 if (r.error) console.error(`teardown: ${r.error}`);
                 if (r.cleaned.length) console.log(`cleaned: ${r.cleaned.join(', ')}`);
             }
+        }
+        // The archive move is a card change like any other: commit it, as wf finish does.
+        if (status === 'done') {
+            const c = cardsCommit(`docs(tasks): ${t.id} done`);
+            if (c.ok) console.log(c.out);
+            else console.error(`cards-commit failed (commit tasks/ with wf cards-commit):\n${c.out}`);
         }
         break;
     }
@@ -166,7 +179,7 @@ tags: [${tags.join(', ')}]
 
 ## Acceptance
 
-- [ ]
+<!-- acceptance: add - [ ] items -->
 `,
             );
             console.log(`${id}  ${file}`);
@@ -178,8 +191,7 @@ tags: [${tags.join(', ')}]
         const dir = `${root}.workflow/queue`;
         mkdirSync(dir, { recursive: true });
         const queued = new Set(readdirSync(dir).map((f) => f.replace(/\.task$/, '')));
-        const eligible = cards.filter((t) => !queued.has(t.id) && !t.tags.some((g) => OVERNIGHT_EXCLUDE.includes(g)));
-        const picked = claimable(eligible, Number(args[0] ?? OVERNIGHT_BATCH), true);
+        const picked = claimable(cards.filter((t) => !queued.has(t.id)), Number(args[0] ?? OVERNIGHT_BATCH), true, OVERNIGHT_EXCLUDE);
         const model = typeof flags.model === 'string' ? flags.model : (config.overnight?.model ?? 'opus');
         for (const t of picked) {
             writeFileSync(`${dir}/${t.id}.task`, `# model: ${model}\n${t.id}\n`);
