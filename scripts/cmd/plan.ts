@@ -165,7 +165,7 @@ const UIS = () => readdirSync(T('ui')).filter((f) => f.endsWith('.md')).map((f) 
 const missing = (g: { requires?: string[]; cwd?: unknown }) =>
     (g.requires ?? []).some((r) => (r.includes('/') ? !existsSync(join(root, typeof g.cwd === 'string' ? g.cwd : '', r)) : !haveCmd(r)));
 
-function vars(b: Brief, stack: Stack, uiId: string, fl: Record<string, boolean>, versionTable: string, gates: StackGate[]): Record<string, string> {
+function vars(b: Brief, stack: Stack, uiId: string, versionTable: string, gates: StackGate[]): Record<string, string> {
     const a = b.answers;
     const locales = arr(a.locales).length ? arr(a.locales) : ['en'];
     const jobs = arr(a['product.jobs']);
@@ -227,7 +227,7 @@ function stackGates(stack: Stack, uiId: string): StackGate[] {
         });
 }
 
-function workflowConfig(b: Brief, stack: Stack, uiId: string, fl: Record<string, boolean>, gates: StackGate[], v: Record<string, string>): Record<string, unknown> {
+function workflowConfig(stack: Stack, uiId: string, fl: Record<string, boolean>, gates: StackGate[], v: Record<string, string>): Record<string, unknown> {
     const standards = ['docs/ENGINEERING-STANDARDS.md', ...(fl.ui ? ['docs/UI-UX-STANDARDS.md'] : [])];
     return {
         $schema: 'https://raw.githubusercontent.com/trongio/claude-workflow/main/schema/workflow.schema.json',
@@ -267,13 +267,13 @@ async function scaffold(): Promise<void> {
         versionTable = table(rows);
     }
     const gates = stackGates(stack, uiId);
-    const v = vars(b, stack, uiId, fl, versionTable, gates);
+    const v = vars(b, stack, uiId, versionTable, gates);
     const outputs: [string, string][] = [
         ['docs/STACK.md', render(readFileSync(T('plan/STACK.md.tmpl'), 'utf8'), v, fl)],
         ['docs/ENGINEERING-STANDARDS.md', render(readFileSync(T('plan/ENGINEERING-STANDARDS.md.tmpl'), 'utf8').replace('{{STACK_STANDARDS}}', v.STACK_STANDARDS), v, fl)],
         ...(fl.ui ? [['docs/UI-UX-STANDARDS.md', render(readFileSync(T('plan/UI-UX-STANDARDS.md.tmpl'), 'utf8').replace('{{UI_RULES}}', v.UI_RULES), v, fl)] as [string, string]] : []),
         ['CLAUDE.md', render(readFileSync(T('plan/claude-md-project.md.tmpl'), 'utf8'), v, fl)],
-        ['.claude/workflow.json', `${JSON.stringify(workflowConfig(b, stack, uiId, fl, gates, v), null, 2)}\n`],
+        ['.claude/workflow.json', `${JSON.stringify(workflowConfig(stack, uiId, fl, gates, v), null, 2)}\n`],
     ];
     const bad = outputs.flatMap(([f, s]) => leftovers(s).map((l) => `${f}: ${l}`));
     if (bad.length) fail(`unrendered placeholders (template bug):\n  ${bad.join('\n  ')}`);
@@ -321,7 +321,7 @@ async function cards(): Promise<void> {
     const fl = flagsOf(b.answers, uiId);
     const stack = stackId && existsSync(T(`stacks/${stackId}.json`)) ? loadStack(stackId) : undefined;
     const v: Record<string, string> = stack
-        ? vars(b, stack, uiId, fl, '', [])
+        ? vars(b, stack, uiId, '', [])
         : { STACK_TITLE: 'chosen stack', DEV_URL: 'the dev URL', WIDEST_LOCALE: widest(arr(b.answers.locales)), FIRST_JOB: arr(b.answers['product.jobs'])[0] ?? 'the first core job' };
     const keys = new Set(planned.map((c) => c.key).filter(Boolean));
     const first = (JSON.parse(readFileSync(T('plan/milestones.json'), 'utf8')) as { first: CardIn[] }).first.filter((c) => (!c.if || fl[c.if]) && !keys.has(c.key));
