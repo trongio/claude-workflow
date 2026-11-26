@@ -3,10 +3,9 @@
 # the plugin is enabled; elsewhere run it by path or symlink it into ~/.local/bin.
 #
 #   card commands     list next claim move new prio show stats queue root   (bun scripts/wf.ts)
-#   wf board          live board on http://127.0.0.1:8090
+#   wf board          live board on http://127.0.0.1:8095
 #   wf gates [...]    quality gates (gates.sh --help)
 #   wf merge BRANCH   merge a branch into the base branch under a lock
-#   wf cards-commit "msg"   commit tasks/ in the main checkout under the same lock
 #   wf wt-init [DIR]  make a worktree runnable
 #   wf review-diff    compact diff for reviewers
 #   wf doc FILE [RE]  markdown heading tree / sections
@@ -49,24 +48,11 @@ init)
     exec bun "$scripts/init.ts" "$@"
     ;;
 night)
-    "$0" queue "${1:-8}"
+    "$0" queue ${1:+"$1"}
     exec "$scripts/overnight-runner.sh"
     ;;
-cards-commit)
-    # shellcheck source=../scripts/lib/common.sh
-    . "$scripts/lib/common.sh"
-    main="$(wf_main)"
-    wf_lock merge
-    trap 'wf_unlock merge' EXIT
-    git -C "$main" add -A tasks
-    if git -C "$main" diff --cached --quiet -- tasks; then
-        echo "no card changes to commit"
-    else
-        git -C "$main" commit -q -m "${1:-chore(tasks): update cards}" -- tasks && echo "committed cards: ${1:-chore(tasks): update cards}"
-    fi
-    ;;
 -h | --help | help)
-    sed -n '2,17p' "$src" | sed 's/^# \{0,1\}//'
+    sed -n '2,14p' "$src" | sed 's/^# \{0,1\}//'
     for f in "$scripts"/cmd/*; do
         [ -e "$f" ] || continue
         printf '  wf %-14s %s\n' "$(basename "${f%.*}")" "$(sed -n 's/^\(#\|\/\/\) wf-help: //p' "$f" | head -1)"

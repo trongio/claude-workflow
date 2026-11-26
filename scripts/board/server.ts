@@ -2,7 +2,7 @@
 // event whenever a card file or git ref changes. Zero dependencies.
 import { existsSync, watch } from 'node:fs';
 import { basename } from 'node:path';
-import { config, milestoneLabel, readCards, root } from '../lib.ts';
+import { BOARD_PORT, config, milestoneLabel, readCards, root } from '../lib.ts';
 
 function git(args: string[]): string {
     const r = Bun.spawnSync(['git', ...args], { cwd: root, stderr: 'ignore' });
@@ -22,14 +22,14 @@ function state() {
         title: config.board?.title ?? `${basename(root.replace(/\/$/, ''))} board`,
         milestoneLabel: milestoneLabel(),
         branch: git(['branch', '--show-current']),
-        tasks: readCards(),
+        tasks: readCards({ bodies: true }),
         commits,
     };
 }
 
 export function serve(portArg?: number): void {
     const hostname = process.env.WF_BOARD_HOST ?? config.board?.host ?? '127.0.0.1';
-    const port = portArg ?? Number(process.env.WF_BOARD_PORT ?? config.board?.port ?? 8090);
+    const port = portArg ?? Number(process.env.WF_BOARD_PORT ?? config.board?.port ?? BOARD_PORT);
     const encoder = new TextEncoder();
     const clients = new Set<ReadableStreamDefaultController<Uint8Array>>();
     let pending: ReturnType<typeof setTimeout> | undefined;

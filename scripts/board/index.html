@@ -44,7 +44,7 @@ main { padding: 16px 20px 40px; display: grid; gap: 16px; }
 .legend b { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 svg.spark { width: 100%; height: 56px; display: block; margin-top: 6px; }
 .grid2 { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 16px; align-items: start; }
-.board { display: grid; grid-template-columns: repeat(6, minmax(170px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.board { display: grid; grid-template-columns: repeat(7, minmax(170px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
 .col { background: var(--col); border-radius: 10px; padding: 8px; min-height: 120px; max-height: 72vh; overflow-y: auto; }
 .col h2 { position: sticky; top: -8px; background: var(--col); padding: 6px 0; z-index: 1; font-size: 12px; margin: 2px 4px 8px; display: flex; justify-content: space-between; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .col.you h2 { color: var(--warn); }
@@ -75,7 +75,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 .dlg-body li.chk { list-style: none; margin-left: -20px; }
 .empty { color: var(--muted); font-size: 12px; padding: 6px 4px; }
 @media (max-width: 1100px) { .stats { grid-template-columns: minmax(0,1fr) minmax(0,1fr); } .grid2 { grid-template-columns: minmax(0,1fr); } }
-@media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } header { flex-wrap: wrap; } .stats { grid-template-columns: minmax(0,1fr); } .board { grid-template-columns: repeat(6, 78vw); } }
+@media (max-width: 600px) { header, main { padding-left: 16px; padding-right: 16px; } header { flex-wrap: wrap; } .stats { grid-template-columns: minmax(0,1fr); } .board { grid-template-columns: repeat(7, 78vw); } }
 </style>
 </head>
 <body>
@@ -139,9 +139,9 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 <script>
 const COLUMNS = [
     ['todo', 'To do'], ['in-progress', 'In progress'], ['code-review', 'Code review'],
-    ['ux-review', 'UX review'], ['owner-review', 'Owner review'], ['done', 'Done'],
+    ['ux-review', 'UX review'], ['owner-review', 'Owner review'], ['verifying', 'Verifying'], ['done', 'Done'],
 ];
-const COLORS = { done: 'var(--ok)', 'owner-review': 'var(--warn)', 'ux-review': '#8b5cf6', 'code-review': '#0ea5e9', 'in-progress': 'var(--accent)', todo: 'var(--muted)' };
+const COLORS = { done: 'var(--ok)', verifying: '#14b8a6', 'owner-review': 'var(--warn)', 'ux-review': '#8b5cf6', 'code-review': '#0ea5e9', 'in-progress': 'var(--accent)', todo: 'var(--muted)' };
 const DAY = 864e5;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -155,9 +155,11 @@ const save = () => { try { localStorage.setItem('board', JSON.stringify(prefs));
 function inMilestone(t) { return t.milestone; }
 function needsYou(t) { return t.status !== 'done' && (t.status === 'owner-review' || /^owner/i.test(t.blocked || '')); }
 
+const LANDED = ['verifying', 'done'];
+// Milestone cards only, like the remaining work it is divided into.
 function velocity(tasks, days) {
     const since = Date.now() - days * DAY;
-    return tasks.filter((t) => t.status === 'done' && day(t.done) >= since).reduce((s, t) => s + t.points, 0) / days;
+    return tasks.filter((t) => t.milestone && LANDED.includes(t.status) && day(t.landed || t.done) >= since).reduce((s, t) => s + t.points, 0) / days;
 }
 
 function render() {
@@ -185,11 +187,11 @@ function render() {
     $('legend').innerHTML = `<span>${donePts} of ${total} pts done</span>` + COLUMNS.filter(([k]) => byStatus[k] && k !== 'done').map(([k, l]) => `<span><b style="background:${COLORS[k]}"></b>${l} ${byStatus[k]}</span>`).join('');
 
     // ETA: remaining unblocked milestone points over recent velocity, with a range.
-    const remaining = ms.filter((t) => t.status !== 'done');
+    const remaining = ms.filter((t) => !LANDED.includes(t.status));
     const blockedPts = remaining.filter((t) => t.blocked).reduce((s, t) => s + t.points, 0);
     const workPts = remaining.reduce((s, t) => s + t.points, 0) - blockedPts;
     const v14 = velocity(tasks, 14), v7 = velocity(tasks, 7), v28 = velocity(tasks, 28);
-    if (!remaining.length && total) { $('eta').textContent = 'Ready'; $('etaSub').textContent = 'every milestone card is done'; }
+    if (!remaining.length && total) { $('eta').textContent = 'Ready'; $('etaSub').textContent = 'every milestone card has landed'; }
     else if (v14 > 0) {
         const at = (v) => new Date(Date.now() + (workPts / v) * DAY);
         const fast = Math.max(v7, v14, v28), slow = Math.min(v7, v14, v28) || v14;
@@ -216,7 +218,7 @@ function render() {
     // Board.
     const card = (t) => `<div class="task" tabindex="0" data-id="${esc(t.id)}">
         <div class="t">${esc(t.title)}</div>
-        <div class="meta"><span>${esc(t.id)}</span><span class="pill">${esc(t.size)}</span>${t.area ? `<span class="pill">${esc(t.area)}</span>` : ''}${t.milestone ? '<span class="pill ms">${esc(label)}</span>' : ''}${t.blocked ? `<span class="pill blocked" title="${esc(t.blocked)}">blocked</span>` : ''}</div>
+        <div class="meta"><span>${esc(t.id)}</span><span class="pill">${esc(t.size)}</span>${t.area ? `<span class="pill">${esc(t.area)}</span>` : ''}${t.milestone ? `<span class="pill ms">${esc(label)}</span>` : ''}${t.blocked ? `<span class="pill blocked" title="${esc(t.blocked)}">blocked</span>` : ''}</div>
         ${t.acceptance?.total ? `<div class="acc" title="${t.acceptance.done}/${t.acceptance.total} acceptance"><span style="width:${(t.acceptance.done / t.acceptance.total) * 100}%"></span></div>` : ''}
     </div>`;
     const order = (a, b) => (!!a.blocked - !!b.blocked) || a.id.localeCompare(b.id, undefined, { numeric: true });
