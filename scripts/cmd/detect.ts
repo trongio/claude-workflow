@@ -172,7 +172,8 @@ function parsePkg(root: string, dir: string, manifest: string): Pkg {
         pkg.lockfile = lock;
         const ln = lock ? basename(lock) : '';
         pkg.pm = ln.startsWith('bun') ? 'bun' : ln === 'pnpm-lock.yaml' ? 'pnpm' : ln === 'yarn.lock' ? 'yarn' : 'npm';
-        pkg.installed = !!upFind(root, dir, ['node_modules']);
+        // Nothing declared, nothing to install: such a package is ready as it is.
+        pkg.installed = !Object.keys(declared).length || !!upFind(root, dir, ['node_modules']);
         pkg.ui = UI_DEPS.some((d) => declared[d]);
         if (declared.next) pkg.devUrl = 'http://127.0.0.1:3000';
         else if (declared['@sveltejs/kit'] || declared.vite || declared.astro) pkg.devUrl = 'http://127.0.0.1:5173';
@@ -181,7 +182,7 @@ function parsePkg(root: string, dir: string, manifest: string): Pkg {
         declared = { ...rec(m.require), ...rec(m['require-dev']) };
         pkg.scripts = Object.keys(rec(m.scripts));
         locks = ['composer.lock'];
-        pkg.installed = existsSync(at('vendor'));
+        pkg.installed = !Object.keys(declared).some((d) => d !== 'php' && !d.startsWith('ext-')) || existsSync(at('vendor'));
         if (existsSync(at('artisan'))) {
             pkg.ui = true;
             pkg.devUrl = 'http://127.0.0.1:8000';
@@ -280,8 +281,14 @@ export function baseBranch(root: string): string {
 export function notInstalled(p: Pkg): string {
     if (p.kind === 'go') return 'toolchain missing: go';
     if (p.kind === 'rust') return 'toolchain missing: cargo';
-    const install = { node: `${p.pm ?? 'npm'} install`, php: 'composer install', python: 'uv sync' }[p.kind];
+    const install = { node: nodeInstall(p.pm ?? 'npm', !!p.lockfile), php: 'composer install', python: 'uv sync' }[p.kind];
     return `dependencies not installed: ${install}`;
+}
+
+// A worktree install never edits or creates a lockfile: frozen with one, none written without.
+export function nodeInstall(pm: string, locked: boolean): string {
+    if (locked) return { npm: 'npm ci', pnpm: 'pnpm install --frozen-lockfile', yarn: 'yarn install --frozen-lockfile', bun: 'bun install --frozen-lockfile' }[pm] ?? `${pm} install`;
+    return { npm: 'npm install --no-package-lock', pnpm: 'pnpm install --lockfile=false', yarn: 'yarn install --no-lockfile', bun: 'bun install --no-save' }[pm] ?? `${pm} install`;
 }
 
 export type GateResult = { gates: Gate[]; testAffected?: { cmd: string; map: { src: string; tests: string }[] }; link: string[]; setup: string[] };
@@ -327,7 +334,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
             if (s.has('format') && s.has('format:check')) add({ name: 'format', cmd: run('format:check'), when, fix: run('format') });
             if (s.has('e2e') || s.has('test:e2e')) add({ name: 'e2e', cmd: run(s.has('e2e') ? 'e2e' : 'test:e2e'), when, heavy: true, inner: false, cache: false });
             if (p.installed && existsSync(join(det.root, p.dir, 'node_modules'))) out.link.push(`${pre}node_modules`);
-            else if (!p.installed) out.setup.push(p.dir ? `cd ${p.dir} && ${pm} install` : `${pm} install`);
+            else if (!p.installed) out.setup.push(p.dir ? `cd ${p.dir} && ${nodeInstall(pm, !!p.lockfile)}` : nodeInstall(pm, !!p.lockfile));
         } else if (p.kind === 'php') {
             const when = W(['*.php', 'composer.json', 'composer.lock', 'phpstan.neon*', 'phpunit.xml*']);
             const runner = has_('pestphp/pest') || existsSync(join(det.root, p.dir, 'vendor/bin/pest')) ? './vendor/bin/pest' : has_('phpunit/phpunit') ? './vendor/bin/phpunit' : '';
