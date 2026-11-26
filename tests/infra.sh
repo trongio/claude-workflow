@@ -67,6 +67,10 @@ echo "$out" | grep -qE '^flaky +\| PASS \(rerun\)' && ok "gates: evidence-based 
 echo "$out" | grep -qE 'not proven: .*src' && ok "gates: skipped gates listed as not proven" || die "skip summary: $out"
 jq -e '.sha and .tree and (.results | length == 6) and (.results[] | select(.name == "slow") | .status == "TIMEOUT")' .workflow/gates-last.json >/dev/null &&
     ok "gates: gates-last.json written" || die "json"
+jq -e '(.results | all(has("reason"))) and (.results[] | select(.name == "slow") | .reason == "")
+    and (.results[] | select(.name == "src") | .reason == "no matching changes")
+    and (.results[] | select(.name == "later") | .reason == "pending")' .workflow/gates-last.json >/dev/null &&
+    ok "gates --json: every result has a reason" || die "reason: $(cat .workflow/gates-last.json)"
 "$wf" gate-log | grep -q 'no_such_tool_wf' && ok "gate-log: last red gate" || die "gate-log"
 cfg '.gates += [{"name": "fullsuite", "cmd": "true", "inner": false}]'
 "$wf" gates --list | grep -qE '^fullsuite +release only' && ok "gates: inner:false is release only" || die "inner: $("$wf" gates --list)"
@@ -115,7 +119,20 @@ grep -q "sha $(git rev-parse HEAD)" .workflow/release.log && grep -qE '^exit 0 a
 cfg '.release = {"cmd": "echo ci-ran; exit 4"}'
 "$wf" gates --release >/dev/null 2>&1 && die "release cmd failure must exit 1"
 grep -qE '^exit 4 after' .workflow/release.log && ok "gates --release: release.cmd exit code logged" || die "release cmd log"
+cfg '.release = {"cmd": "sleep 1433"} | .gates[0].timeout = 1'
+"$wf" gates --release >/dev/null 2>&1 && die "a release.cmd timeout must exit 1"
+jq -e '.results[0].status == "TIMEOUT"' .workflow/gates-last.json >/dev/null && ! pgrep -fx 'sleep 1433' >/dev/null &&
+    ok "gates --release: release.cmd times out at the largest gate timeout, killed" || die "release timeout: $(cat .workflow/gates-last.json)"
 cfg 'del(.release)' # back to the committed config
+cfg '.gates += [{"name": "fixer", "cmd": "true", "fix": "sleep 1422", "timeout": 1},
+    {"name": "noisy", "cmd": "seq 100; exit 1", "cache": false}]'
+out="$("$wf" gates --only fixer --fix 2>&1)" || true
+echo "$out" | grep -q 'fix fixer: TIMEOUT' && ! pgrep -fx 'sleep 1422' >/dev/null && ok "gates --fix: a fix command times out, its group killed" || die "fix timeout: $out"
+block() { "$wf" gates --only noisy 2>&1 | awk '/^--- noisy/ { f = 1 } f' | wc -l; }
+[ "$(block)" = 21 ] && ok "gates: a failure shows 20 log lines by default" || die "tail default: $(block)"
+cfg '.gatesTailLines = 200'
+[ "$(block)" -le 24 ] && ok "gates: a failure block stays within 25 lines" || die "tail cap: $(block)"
+cfg 'del(.gatesTailLines) | .gates |= map(select(.name != "fixer" and .name != "noisy"))'
 
 # wt-init: copies deps (never symlinks), env, ledger, hooksPath.
 mkdir -p node_modules/dep .hooks
@@ -227,6 +244,15 @@ git add -A && git commit -qm "chore: card 4"
 "$wf" queue 1 >/dev/null
 PATH="$stub:$PATH" timeout 60 "$wf" run >"$dir-run.log" 2>&1 || die "runner exit 3"
 [ -f .workflow/skipped/WF-4.task ] && ok "runner: overnight.exclude tags skipped" || die "exclude: $(cat "$dir-run.log")"
+
+# Doctor warnings: pr mode without push, stale queue file, dead active runner.
+touch .workflow/queue/WF-1.task
+jq '.active = true | .pid = 999999' .workflow/runner/state.json >state.tmp && mv state.tmp .workflow/runner/state.json
+out="$("$wf" doctor 2>&1 || true)"
+echo "$out" | grep -q 'WARN finish.mode is pr but push is not true' && ok "doctor: warns on finish.mode pr without push" || die "doctor push: $out"
+echo "$out" | grep -q 'WARN stale queue file .*WF-1.task' && ok "doctor: warns on a queue file for a card not todo" || die "doctor queue: $out"
+echo "$out" | grep -q 'WARN runner state .* pid 999999 is gone' && ok "doctor: warns on an active runner state with a dead pid" || die "doctor runner: $out"
+rm -f .workflow/queue/WF-1.task
 
 rm -rf "$stub" "$dir-run.log" "$dir-init.err" "$mark"
 printf '\n%d infra checks passed (scratch: %s)\n' "$pass" "$dir"

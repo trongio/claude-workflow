@@ -162,6 +162,28 @@ for c in doctor gate-log orphans prune test-affected preview; do
 done
 ok "infra commands listed and answer --help"
 
+# --help anywhere never runs the command: no card moved, nothing queued, no runner.
+snap() { {
+    git status --porcelain
+    ls .workflow/queue .workflow/logs 2>/dev/null
+    "$wf" list
+} | md5sum; }
+before="$(snap)"
+card_help=1
+bun "$repo/scripts/wf.ts" help list >/dev/null 2>&1 || card_help=0 # per-command help lands with the TS side
+helps=(gates merge wt-init review-diff doc outline run night init board cards-commit)
+[ "$card_help" = 1 ] && helps+=(claim queue show list next move new prio stats root approve)
+for f in "$repo"/scripts/cmd/*.sh; do helps+=("$(basename "$f" .sh)"); done
+for c in "${helps[@]}"; do
+    out="$(timeout 20 "$wf" "$c" WF-2 --help 2>&1)" || die "wf $c --help exits non-zero: $out"
+    [ -n "$out" ] || die "wf $c --help prints nothing"
+done
+for c in claim queue night move; do timeout 20 "$wf" "$c" --help >/dev/null 2>&1 || true; done
+[ "$(snap)" = "$before" ] && [ ! -d .workflow/.runner.lock ] && ok "--help never runs the command (no card moved, no queue file, no runner)" || die "--help had side effects"
+[ "$card_help" = 1 ] || echo "note: card command --help exit codes not checked (wf.ts help <cmd> not available yet)"
+"$wf" prune --help | grep -q 'set -e' && die "prune --help leaks code"
+"$wf" gates --help | grep -q 'Usage: wf gates' && ! "$wf" gates --help | grep -q 'gates.sh' && ok "help prints only the header comment, with the wf name" || die "gates --help"
+
 printf '\n%d checks passed (scratch: %s)\n' "$pass" "$dir"
 
 # Gate, worktree, ledger and runner behavior: tests/infra.sh (WF_SMOKE_INFRA=0 skips).
