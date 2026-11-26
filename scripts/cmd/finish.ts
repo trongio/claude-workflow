@@ -5,7 +5,8 @@ import {
     parkFields, parseArgs, plural, readCards, readJson, refreshOutcome, releaseVerdict, root, section, tail, taskBranch, teardown, today, update,
     withLock, worktreeOf, worktreePath,
 } from '../lib.ts';
-import { realpathSync } from 'node:fs';
+import { realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 const HELP = `Usage: wf finish ID [--force] [--mode pr|merge|none] [--no-cleanup]
 
@@ -23,7 +24,8 @@ In order, refusing before anything lands:
 The Outcome's wf:auto block is refreshed (as wf outcome does) before it is committed or used
 as the PR body.
 Then wf cards-commit, and land per finish.mode:
-    pr     needs "push": true. Push the task branch, open a PR unless one is open for it.
+    pr     needs "push": true. Push the task branch, open a PR unless one is open for it
+           (an open PR gets the refreshed Outcome as its body).
            finish.autoMerge merges it (squash unless finish.squash is false) when risk is not
            high and the gates were green, pinned to the gated head. A PR still open parks
            the card in owner-review (the worktree goes when clean and pushed; the branch
@@ -283,12 +285,18 @@ function landPr(): string {
         if (!push.ok) landFail(`push failed\n${why(push)}`);
         say(`land: pushed ${branch} (${short(head)})`);
         pr = view();
-        if (pr?.state === 'OPEN') say(`land: updated ${pr.url}`);
-        else {
-            const refs = card.links.filter((l) => /^#\d+$/.test(l)).map((l) => `Refs ${l}`);
-            // The card as committed above, with the refreshed Outcome block.
-            const body = [section(findCard(readCards(), card.id).body, 'Outcome') ?? '', ...refs].join('\n\n');
-            const created = run(['gh', 'pr', 'create', '--base', base, '--head', branch, '--title', card.title, '--body', body], dir ?? root, {}, NET);
+        // The PR body: the card as committed above, with the refreshed Outcome block. An open PR
+        // gets it too, so the body never describes an older head.
+        const refs = card.links.filter((l) => /^#\d+$/.test(l)).map((l) => `Refs ${l}`);
+        const bodyFile = `${tmpdir()}/wf-pr-body-${process.pid}.md`;
+        writeFileSync(bodyFile, [section(findCard(readCards(), card.id).body, 'Outcome') ?? '', ...refs].join('\n\n'));
+        process.on('exit', () => rmSync(bodyFile, { force: true }));
+        if (pr?.state === 'OPEN') {
+            const edited = run(['gh', 'pr', 'edit', String(pr.number ?? pr.url), '--body-file', bodyFile], dir ?? root, {}, NET);
+            if (!edited.ok) landFail(`gh pr edit failed\n${why(edited)}`);
+            say(`land: updated ${pr.url}`);
+        } else {
+            const created = run(['gh', 'pr', 'create', '--base', base, '--head', branch, '--title', card.title, '--body-file', bodyFile], dir ?? root, {}, NET);
             if (!created.ok) landFail(`gh pr create failed\n${why(created)}`);
             pr = view() ?? { state: 'OPEN', url: created.out.split('\n').pop() ?? '', headRefOid: head };
             say(`land: opened ${pr.url}`);

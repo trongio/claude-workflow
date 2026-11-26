@@ -105,7 +105,7 @@ cat >"$dir.bin/gh" <<'GH'
 #!/usr/bin/env bash
 set -eu
 echo "gh $*" >>"$GH_LOG"
-[ "$1 $2" = "pr view" ] || [ "$1 $2" = "pr create" ] || [ "$1 $2" = "pr merge" ] || { echo "fake gh: unsupported $*" >&2; exit 1; }
+[ "$1 $2" = "pr view" ] || [ "$1 $2" = "pr create" ] || [ "$1 $2" = "pr merge" ] || [ "$1 $2" = "pr edit" ] || { echo "fake gh: unsupported $*" >&2; exit 1; }
 sub="$2"
 shift 2
 tip() { git ls-remote origin "refs/heads/$1" | cut -f1; }
@@ -123,15 +123,22 @@ create)
         echo "https://example.invalid/pull/0"
         exit 0
     }
-    head=""
+    head="" body=""
     while [ $# -gt 0 ]; do
         [ "$1" = --head ] && head="$2"
+        [ "$1" = --body-file ] && body="$2"
         shift
     done
     n=$(($(jq length "$GH_STATE") + 1))
+    cp "$body" "$GH_STATE.body.$n"
     jq --arg b "$head" --argjson n "$n" '. + [{number: $n, head: $b, state: "OPEN", url: "https://example.invalid/pull/\($n)"}]' "$GH_STATE" >"$GH_STATE.tmp"
     mv "$GH_STATE.tmp" "$GH_STATE"
     echo "https://example.invalid/pull/$n"
+    ;;
+edit)
+    # The PR body as the forge holds it: GH_STATE.body.N.
+    [ "$2" = --body-file ] || { echo "fake gh: edit needs --body-file" >&2; exit 1; }
+    cp "$3" "$GH_STATE.body.$1"
     ;;
 merge)
     url="$1" want=""
@@ -304,6 +311,8 @@ commit_in "$dir/.workflow/worktrees/T-6" fix.txt
 expect "finish T-6 with a fix commit" "$wf" finish T-6
 [ "$(git ls-remote origin refs/heads/wf/T-6 | cut -f1)" = "$(git rev-parse wf/T-6)" ] && grep -q 'land: updated' "$dir.out" && [ "$(jq length "$GH_STATE")" = 1 ] &&
     ok "fix commit pushed to the same PR" || die "fix push: $(cat "$dir.out")"
+grep -q 'fix.txt' "$GH_STATE.body.1" && grep -q "^gh pr edit 1 --body-file " "$GH_LOG" &&
+    ok "the open PR's body is the refreshed Outcome" || die "stale PR body: $(cat "$GH_STATE.body.1")"
 
 gh_merge 1
 expect "finish T-6 after the merge" "$wf" finish T-6
