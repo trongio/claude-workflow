@@ -11,10 +11,20 @@ set -eu
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 wf="$repo/bin/wf"
 dir="${1:-$(mktemp -d "${TMPDIR:-/tmp}/wf-verify.XXXXXX")}"
+# Scratch is removed on success unless WF_KEEP=1 or a dir was passed; kept on failure for debugging.
+own_scratch=$([ -z "${1:-}" ] && echo 1 || true)
+wf_scratch_cleanup() {
+    local rc="${1:-$?}"
+    if [ "$rc" = 0 ] && [ -n "$own_scratch" ] && [ -z "${WF_KEEP:-}" ]; then
+        git -C "$dir" worktree prune 2>/dev/null || true
+        rm -rf "$dir" "$dir".* "$dir"-*
+    fi
+    return "$rc"
+}
 pass=0
 skip=0
 server_pid=""
-trap '[ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null; true' EXIT
+trap 'rc=$?; [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null; wf_scratch_cleanup "$rc"' EXIT
 
 ok() {
     pass=$((pass + 1))
