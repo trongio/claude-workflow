@@ -458,7 +458,7 @@
     },
     "models": {
       "type": "object",
-      "description": "Model per agent role, overriding the agent frontmatter. Keys: planner, reviewer, ux-critic, implementer, researcher, verifier, mechanic, scout.",
+      "description": "Model per agent role, overriding the agent frontmatter: when the manager spawns a role listed here it passes this value as the model. Keys: planner, reviewer, ux-critic, implementer, researcher, verifier, mechanic, scout.",
       "additionalProperties": {
         "type": "string"
       }

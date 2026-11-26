@@ -21,19 +21,23 @@ Open Claude Code in the repo you want to use it in and paste this:
 
 ```text
 Set up the claude-workflow plugin (github.com/trongio/claude-workflow) in this repo, end to end.
-Ask me before anything destructive (deleting, overwriting, force flags) and never push.
+Ask me before anything destructive (deleting, overwriting, force flags) and do not push during setup.
 
 1. Install it at project scope with Bash:
    claude plugin marketplace add trongio/claude-workflow --scope project
    claude plugin install workflow@trongio --scope project
    (if the marketplace is already added: claude plugin marketplace update trongio)
-2. Check that bun, jq, git and gh are on PATH, plus bash 4 or newer. For each missing tool,
+2. Check that bun, jq and git are on PATH, plus bash 4 or newer, and gh if tasks will land as PRs. For each missing tool,
    tell me the install command for this OS and ask before running it.
 3. Ask me to type /reload-plugins so the workflow skills load, and wait until I have.
 4. If this repo is empty or has no docs/STACK.md and no clear stack, ask me to run
    /workflow:plan-project. Otherwise ask me to run /workflow:init. Answer its questions with me.
-5. Run `wf doctor` and fix every failure that is configuration; list the rest for me.
-6. Show `wf status` and explain in a few lines what was set up, what I should fill in by hand
+5. Ask me how tasks should land and set it in .claude/workflow.json: finish.mode "pr" with
+   push true (needs gh and a remote; recommended when the main checkout is served by a dev
+   server or shared with other sessions), or finish.mode "merge" (local, never pushes; only
+   when nothing serves from the main checkout). PR mode refuses to finish while push is false.
+6. Run `wf doctor` and fix every failure that is configuration; list the rest for me.
+7. Show `wf status` and explain in a few lines what was set up, what I should fill in by hand
    in .claude/workflow.json, and how to start the first task (/workflow:task "<what to build>").
 Do not commit unless I ask.
 ```
@@ -51,9 +55,10 @@ overnight runs. Every rule in the prompts and scripts exists because its
 absence once cost a shipped defect or a lost afternoon. A few of them:
 
 - **A scripted page check returns one JSON line** (status, console errors,
-  overflow, clipped text, screenshot path) instead of 1,000 to 3,000 tokens
-  per browser-automation step. The verifier runs scripts first and opens a
-  browser only for what a script cannot judge.
+  overflow, clipped text, screenshot path). In one of those projects,
+  step-by-step browser driving cost about 6M tokens across 739 sessions. The
+  verifier runs scripts first and opens a browser only for what a script
+  cannot judge.
 - **Merged is not done.** A fully green merge once shipped two critical bugs
   that a review loop caught only afterwards. Cards now land in `verifying`,
   and reach `done` only with a note on how the change was observed working.
@@ -76,6 +81,8 @@ absence once cost a shipped defect or a lost afternoon. A few of them:
 
 ![Card lifecycle from todo to done](docs/images/lifecycle.svg)
 
+![One card going round the loop, animated](docs/images/lifecycle-loop.gif)
+
 ```
  wf start      branch wf/<ID> + its own worktree, card -> in-progress
  plan          planner reads the spec and standards -> file map, risk, briefs
@@ -85,42 +92,49 @@ absence once cost a shipped defect or a lost afternoon. A few of them:
  review        IN PARALLEL: reviewer(s) + verifier (wf shots, wf check) + ux-critic
  fix           one merged fix round by a fresh implementer; only the fix diff is re-reviewed
  release       wf gates --release: every gate, uncached; a subset is not green
- outcome       wf outcome writes the record; the model fills the prose
- owner hold    high risk stops in owner-review (wf park)
- wf finish     land per finish.mode (PR by default), card -> verifying, tear down
-               the worktree, branch, DB and ports; wf doctor shows no leftovers
+ outcome       wf outcome writes the record; the manager fills the prose
+ owner hold    high risk without owner approval parks in owner-review, in every mode
+ wf finish     land per finish.mode and tear down the worktree, DB and ports:
+                 pr: push, open or update the PR, card parks in owner-review until
+                     the PR merges; run wf finish <ID> again after the merge to move
+                     it to verifying and delete the branch
+                 merge: merge into baseBranch under the lock, card -> verifying
+               wf doctor shows no leftovers
  done          wf move <ID> done --verified "how it was observed"
 ```
 
-Review depth scales with risk. `wf risk` decides it from the diff:
+Review depth scales with risk. `wf risk` decides it from the diff (`wf risk
+--explain` shows which file and pattern decided):
 
 | Level | Covers | Required |
 |---|---|---|
-| light | copy, docs, styles, config text, test-only | gates + one spot check; no simplify pass |
-| standard | normal features and fixes | gates, one reviewer, verifier, ux-critic if the look changed |
-| high | auth, money, data migrations, infra, paths in `risk.high` | two independent reviewers at once plus `review.extraAgents.high`, verifier, ux-critic, then the owner |
+| light | only `*.md`, `docs/`, `tests/` or `*.css` changed | gates plus a manager spot check of the diff; no reviewer agent, no simplify pass |
+| standard | anything that is neither light nor high | gates, `review.minPasses` reviewer rounds (default 1), verifier, ux-critic if the look changed |
+| high | a path in `risk.high`; when that is unset, built-in patterns: migrations, auth, billing and payment, security, infra and deploy, CI workflows, Dockerfiles, `*.sql` | two independent reviewers at once plus `review.extraAgents.high`, verifier, ux-critic, then the owner (`review.ownerHoldHigh`) |
 
 Fix rounds are capped (`review.maxRounds`, `ux.maxFixRounds`); remaining
 minors become cards instead of another round.
 
 ## The planning phase
 
-![Planning: stack survey, design directions, standards, gates, first cards](docs/images/planning.svg)
+![Planning: detect, three researchers and the ux-critic in parallel, the planner scores and tunes, the owner decides, scaffold and first cards](docs/images/planning.svg)
 
 Before the first card, `/workflow:plan-project` (details in
 [`skills/plan-project/SKILL.md`](skills/plan-project/SKILL.md)) runs a short
 planning phase on an empty or young repo:
 
-1. `wf detect` reads what exists; the researcher surveys candidate stacks with
-   versions from `wf versions` (each with its release URL and fetch date,
-   never recalled), support windows, ecosystem and hosting cost.
-2. The ux-critic proposes two design directions (system, type scale, density,
-   colour use, tone) under anti-template rules.
-3. The owner decides; the decision is recorded in `docs/STACK.md`, the
-   standards in `docs.standards`, and the gates that enforce them in
-   `.claude/workflow.json`.
-4. `wf plan scaffold` and `wf plan cards` turn the plan into a skeleton and a
-   first milestone of cards.
+1. `wf detect` reads what exists; 2-3 researchers (one per candidate stack
+   family) survey stacks in parallel with versions from `wf versions` (each
+   with its release URL and fetch date, never recalled), support windows,
+   ecosystem and hosting cost.
+2. At the same time the ux-critic proposes two design directions (system,
+   type scale, density, colour use, tone) under anti-template rules.
+3. The planner scores the options; the owner decides. The decision is
+   recorded in `docs/STACK.md`, the standards in `docs.standards`, and the
+   gates that enforce them in `.claude/workflow.json`.
+4. `wf plan scaffold` renders the docs and config, the planner tunes the
+   marked `<!-- tune -->` blocks, and `wf plan cards` seeds a first milestone
+   of cards.
 
 On an existing repo, `/workflow:init` does the setup part only.
 
@@ -137,9 +151,16 @@ On an existing repo, `/workflow:init` does the setup part only.
 | `mechanic` | sonnet | multi-step mechanical edits (never a single command) |
 | `scout` | haiku | "where is X" lookups (read-only) |
 
-`fable` is the strongest model alias; without access to it, set `models` in
-`.claude/workflow.json` (for example `{"planner": "opus"}`) or override the
+`fable` is the strongest model alias. To use other models, set `models` in
+`.claude/workflow.json` (for example `{"planner": "opus"}`): the manager
+passes that value as the model whenever it spawns the role. Or override the
 agent in `.claude/agents/`.
+
+Who does what, the same in every prompt: the manager and implementers run
+`wf gates` (reviewers never run gates; they read the table they are given);
+`wf outcome` writes the record and the manager fills its prose; every agent
+cleans up what it started before it reports, and `wf finish` tears down the
+task's worktree.
 
 ## Commands
 
@@ -160,9 +181,9 @@ Skills (type them in Claude Code):
 | Area | Commands |
 |---|---|
 | Cards | `wf new`, `wf list`, `wf next`, `wf claim`, `wf show`, `wf move ID STATUS [--verified "how"]`, `wf note`, `wf park ID "owner: ..."`, `wf prio`, `wf status`, `wf board` |
-| Task lifecycle | `wf start ID`, `wf plan-save ID FILE`, `wf brief ID --stream N`, `wf risk [BASE]`, `wf outcome ID [--tick 1,2]`, `wf finish ID`, `wf cards-commit -m "msg"`, `wf handoff` |
-| Gates | `wf gates [--release] [--json] [--last] [--fix]`, `wf gate-log [GATE]`, `wf test-affected [BASE]` |
-| Health | `wf doctor`, `wf orphans [--kill]`, `wf prune [--apply]`, `wf fix-sweep [--since DATE]` |
+| Task lifecycle | `wf start ID`, `wf plan-save ID FILE`, `wf brief ID --stream N`, `wf risk [BASE] [--explain]`, `wf outcome ID [--tick 1,2]`, `wf finish ID`, `wf cards-commit -m "msg"` (on `baseBranch` only), `wf handoff` |
+| Gates | `wf gates [--release] [--json] [--last] [--fix] [--only a,b]` (an unknown name is an error), `wf gate-log [GATE]`, `wf test-affected [BASE]` |
+| Health | `wf doctor [--strict]`, `wf orphans [--kill ID or DIR] [--all]`, `wf prune [--apply [ID]]`, `wf fix-sweep [--since DATE]` |
 | Verification | `wf check URL... [--viewports] [--locale] [--expect TEXT]`, `wf shots ID [paths]`, `wf flow FILE.json`, `wf preview up or down ID` |
 | Search and text | `wf rgx PATTERN [PATH]`, `wf outline FILE`, `wf doc FILE [section]`, `wf review-diff [BASE]`, `wf lang get or set or missing` |
 | Planning | `wf detect [--json]`, `wf versions PKG... or --check docs/STACK.md`, `wf plan set or scaffold or cards` |
@@ -179,42 +200,57 @@ Every command has `--help`; `wf help` lists them all.
 | Key | Default | Meaning |
 |---|---|---|
 | `idPrefix`, `baseBranch`, `wipLimit`, `timezone` | repo initials, origin HEAD, 2, system | card ids, landing target, max active cards, card dates |
-| `push` | false | whether finishing a task pushes |
-| `gates[]` | detected | `{name, cmd, when, fix, cache, cwd, timeout, pending, release, rerun, heavy}` |
-| `gatesJobs`, `gatesCacheKeys` | CPU/2, 8 | heavy gates at once; cache entries per gate so parallel worktrees do not evict each other |
-| `release.cmd` | all release gates | the full CI command that authorizes landing |
-| `testAffected` | | map from source globs to tests for the inner loop |
-| `worktree.copy`, `cache`, `setup`, `env`, `pool` | detected | make each worktree runnable: files to copy, copy-on-write build caches, setup commands, per-worktree env (`{id}`, `{slug}`, `{port}`), warm pool |
+| `milestone.label` | `milestone` | name of the goal milestone cards count toward |
+| `board.title`, `board.host`, `board.port` | `<repo> board`, 127.0.0.1, 8095 | the live board page |
+| `push` | false | whether `wf finish` may push; `finish.mode` `pr` requires true |
+| `gates[]` | detected | `{name, cmd, when, fix, cache, cwd, timeout, pending, release, inner, rerun: {when, max}, heavy}`; `inner: false` = release only |
+| `gatesCache`, `gatesCacheKeys`, `gatesJobs`, `gatesTailLines` | true, 8, CPU/2, 30 | cache switch; cache entries per gate so parallel worktrees do not evict each other; heavy gates at once; output lines per failing gate |
+| `release.cmd`, `release.log` | all release gates, `.workflow/release.log` | the full CI command that authorizes landing, and its log |
+| `testAffected.cmd`, `testAffected.map[]` (`src`, `tests`) | | map from source globs to tests for the inner loop |
+| `worktree.link`, `copy`, `cache`, `setup`, `env`, `pool` | detected, pool 0 | make each worktree runnable: dirs to hardlink, files to copy, copy-on-write build caches, setup commands, per-worktree env (`{id}`, `{slug}`, `{port}`), warm pool size |
 | `worktree.teardown` | [] | commands run when a worktree is removed, same placeholders, e.g. `dropdb --if-exists app_{slug}` |
-| `finish` | `pr`, squash, no auto merge, cleanup | how `wf finish` lands a task |
-| `tracker` | none | mirror cards to GitHub issues; `onMerge` runs on landing |
-| `planner.skipFor` | `["S"]` | sizes that skip the planner |
-| `review` | 1 pass, 3 rounds, owner hold on high | review depth, round cap, extra agents per risk |
-| `ui`, `dev.*` | detected | the local dev app, login hints (where credentials live, never the secret), viewports |
-| `ux` | | locales, the widest locale, UX fix round cap |
+| `preview.cmd` | | serves one worktree for `wf preview up ID` (`{port}`, `{id}`, `{slug}`) |
+| `finish.mode`, `squash`, `autoMerge`, `cleanup` | `pr`, true, false, true | how `wf finish` lands a task (`pr`, `merge` or `none`) |
+| `tracker.kind`, `requireLink`, `onMerge` | none, false, "" | mirror cards to GitHub issues; `onMerge` runs on landing |
+| `planner.skipFor` | `["S"]` | card sizes that skip the planner |
+| `review.minPasses`, `maxRounds`, `extraAgents`, `ownerHoldHigh` | 1, 3, {}, true | reviewer rounds for standard and high risk, round cap, extra agents per risk, owner hold on high |
+| `ui` | detected | whether there is a UI to verify and critique |
+| `dev.url`, `login`, `loginFlow`, `viewports`, `check`, `screenshots` | url detected; loginFlow `.workflow/login.flow.json`; viewports `[375, 1440]`; screenshots `.workflow/shots` | the local dev app, login hints (where credentials live, never the secret), the sign-in flow `wf shots` reuses, widths, an optional project check command, screenshot dir |
+| `ux.locales`, `widestLocale`, `localeDir`, `maxFixRounds` | localeDir detected; maxFixRounds 2 | shipped locales, the locale visual checks run in, the catalogs `wf lang` edits, UX fix round cap |
 | `docs.spec`, `docs.standards`, `docs.design` | [] | ground truth for planner, every agent, the critic |
-| `risk.high` | [] | paths that make a diff high risk |
-| `models` | | model per agent role |
-| `overnight` | 2 parallel, auto permission mode | the unattended runner; `exclude` tags it never picks |
+| `risk.high` | built-in patterns | path globs that make a diff high risk |
+| `models` | | model per agent role; the manager passes it when spawning that role |
+| `stack.id`, `stack.ui`, `stack.decided` | | written by `/workflow:plan-project` |
+| `overnight.parallel`, `maxHours`, `timeoutMinutes`, `retries`, `model`, `permissionFlags`, `exclude`, `batch` | 2, 24, 120, 2, opus, `--permission-mode auto`, migration/deploy/hardware, 8 | the unattended runner; `exclude` tags it never picks |
 
 ## Safety defaults
 
-- **PR mode.** `finish.mode` is `pr`: the task branch is pushed only when you
-  allow pushing, and the main checkout is never checked out or merged into, so
-  a served dev app and other sessions keep running.
+- **PR mode.** `finish.mode` is `pr`: the main checkout is never checked out
+  or merged into, so a served dev app and other sessions keep running. It
+  needs `push: true`; until you set it, `wf finish` refuses and tells you to
+  set `push` or use `merge` or `none`.
 - **Push off.** `push` defaults to false. Pushing is an explicit project
-  choice.
+  choice; `merge` and `none` never push. For a solo, local repo, set
+  `finish.mode` to `merge` only when nothing serves from the main checkout;
+  otherwise keep `pr` and set `push: true`.
 - **Auto permission mode overnight.** The runner passes `--permission-mode
   auto`, not `--dangerously-skip-permissions`, and skips cards tagged
   `migration`, `deploy` or `hardware` (`overnight.exclude`).
-- **High risk waits for you.** Auth, money, migrations and infra stop in
-  `owner-review` before landing.
-- **Read-only agents stay read-only.** Planner, reviewer, scout and
-  researcher have no edit tools; verifier and ux-critic cannot edit files.
-  None of them may check out, stash or reset in any checkout.
-- **Nothing left behind.** `wf finish` tears down the worktree, branch, test
-  database and ports; `wf doctor` reports leftovers, `wf prune` and `wf
-  orphans` remove them.
+- **High risk waits for you.** In every finish mode, a high-risk card without
+  owner approval parks in `owner-review` (`review.ownerHoldHigh`, default
+  true).
+- **Read-only agents have no Edit or Write tools.** That covers planner,
+  reviewer, scout, researcher, verifier and ux-critic. They keep Bash, so the
+  rule that they never check out, stash or reset in any checkout (they read
+  revisions with `git show` and `git diff`) lives in their prompts.
+- **Nothing left behind, nothing lost.** `wf finish` tears down the worktree,
+  test database and ports, and aborts instead of discarding uncommitted
+  work. `wf doctor` reports leftovers (a `dev.url` that does not answer is a
+  warning unless `--strict`). `wf prune --apply [ID]` removes only
+  `.workflow/worktrees` and its own ledger entries; pass an ID for an
+  abandoned card. `wf orphans --kill ID` (or a worktree DIR) stops the
+  servers left in that worktree; a bare `--kill` refuses, `--all` stops
+  every listed one.
 
 ## FAQ
 
@@ -229,8 +265,8 @@ skips.
 caches by content hash, and runs review, verification and critique in
 parallel. The full suite runs once, at `wf gates --release`.
 
-**Does it need GitHub?** No. `tracker.kind` defaults to none and
-`finish.mode` can be `merge` for a solo repo nobody serves from.
+**Does it need GitHub?** Only for `finish.mode` `pr`, which needs `gh` and a
+remote. `merge` and `none` work offline, and `tracker.kind` defaults to none.
 
 **What if a session dies mid-task?** Implementers commit each finished step.
 `wf handoff` writes a snapshot (branch, cards in flight, unpushed commits,
@@ -255,6 +291,10 @@ Uninstalling leaves your `tasks/`, `.claude/workflow.json` and CLAUDE.md alone.
 
 ```bash
 tests/smoke.sh          # manifests, card CLI, board, gates, worktrees, lint, timings
+tests/cards.sh          # card lifecycle: start, outcome, finish, move done --verified
+tests/infra.sh          # gates, gate-log, wt-init, prune, runner, test-affected, doctor
+tests/plan.sh           # detect, versions, plan scaffold and cards
+tests/verify.sh         # wf check, flow, shots (Playwright), rgx, lang
 claude plugin validate .
 ```
 
