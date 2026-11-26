@@ -6,7 +6,7 @@
   "timezone": "Europe/Berlin",
   "push": false,
   "milestone": { "label": "v1 launch" },
-  "board": { "title": "App board", "host": "127.0.0.1", "port": 8090 },
+  "board": { "title": "App board", "host": "127.0.0.1", "port": 8095 },
   "gates": [
     { "name": "format", "cmd": "bun run format:check", "when": ["*.ts", "*.tsx", "*.css"], "fix": "bun run format" },
     { "name": "lint", "cmd": "bun run lint", "when": ["*.ts", "*.tsx", "eslint.config.*"], "fix": "bun run lint --fix" },

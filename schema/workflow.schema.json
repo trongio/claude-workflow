@@ -55,7 +55,7 @@
         },
         "port": {
           "type": "integer",
-          "default": 8090
+          "default": 8095
         }
       }
     },
@@ -323,6 +323,11 @@
             "hardware"
           ],
           "description": "Card tags (in the card's tags: list) the runner never picks up."
+        },
+        "batch": {
+          "type": "integer",
+          "default": 8,
+          "description": "Cards wf queue / wf night queue when no count is given."
         }
       }
     },
