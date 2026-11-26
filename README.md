@@ -27,8 +27,8 @@ Ask me before anything destructive (deleting, overwriting, force flags) and do n
    claude plugin marketplace add trongio/claude-workflow --scope project
    claude plugin install workflow@trongio --scope project
    (if the marketplace is already added: claude plugin marketplace update trongio)
-2. Check that bun, jq and git are on PATH, plus bash 4 or newer, and gh if tasks will land as PRs. For each missing tool,
-   tell me the install command for this OS and ask before running it.
+2. Check that bun, jq and git are on PATH, plus bash 4 or newer (and gh if tasks will land as
+   PRs). For each missing tool, tell me the install command for this OS and ask before running it.
 3. Ask me to type /reload-plugins so the workflow skills load, and wait until I have.
 4. If this repo is empty or has no docs/STACK.md and no clear stack, ask me to run
    /workflow:plan-project. Otherwise ask me to run /workflow:init. Answer its questions with me.
