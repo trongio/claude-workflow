@@ -78,6 +78,27 @@ if ! mkdir "$dir/.runner.lock" 2>/dev/null; then
 fi
 echo $$ >"$dir/.runner.lock/pid"
 trap 'rm -rf "$dir/.runner.lock"' EXIT
+declare -A running=()
+# Killed: stop every claude session (own process groups, recorded in
+# .workflow/run/<ID>.pids) and the card subshells before the lock goes, so a
+# second runner never starts beside sessions that are still working.
+# shellcheck disable=SC2329 # invoked by the traps below
+on_signal() {
+    local f p
+    trap - INT TERM HUP
+    log "runner: signal received, stopping ${#running[@]} session(s)"
+    for p in "${running[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
+    for f in "$dir"/run/*.pids; do
+        [ -f "$f" ] || continue
+        while read -r p; do wf_kill_tree "$p"; done <"$f"
+        rm -f "$f"
+    done
+    rm -rf "$dir/.runner.lock"
+    exit "$1"
+}
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
 
 # Sleep in chunks, waking for STOP or the deadline. Returns 1 when interrupted.
 snooze() {
@@ -133,10 +154,10 @@ limit_wait() {
 
 # Run one claude invocation in a worktree, in its own process group, with a
 # watchdog for STOP, the attempt timeout and the deadline.
-# supervise <wt> <logfile> <outfile> <claude args...>; rc 124 timeout, 143 STOP.
+# supervise <id> <wt> <logfile> <outfile> <claude args...>; rc 124 timeout, 143 STOP.
 supervise() {
-    local wt="$1" logfile="$2" outfile="$3" pid wd rc limit marker="$3.killed"
-    shift 3
+    local id="$1" wt="$2" logfile="$3" outfile="$4" pid wd rc limit marker="$4.killed"
+    shift 4
     limit=$((TIMEOUT_MIN * 60))
     [ $((deadline - $(date +%s))) -lt "$limit" ] && limit=$((deadline - $(date +%s)))
     rm -f "$marker"
@@ -150,10 +171,12 @@ supervise() {
         wf_kill_tree "$pid"
     ) >/dev/null 2>&1 &
     wd=$!
+    printf '%s\n%s\n' "$pid" "$wd" >"$dir/run/$id.pids"
     wait "$pid"
     rc=$?
     kill -- "-$wd" 2>/dev/null
     wait "$wd" 2>/dev/null
+    rm -f "$dir/run/$id.pids"
     set +m
     case "$(cat "$marker" 2>/dev/null)" in
     stop) rc=143 ;;
@@ -169,6 +192,7 @@ card_field() { "$wf" show "$1" 2>/dev/null | sed -n "s/^$2: *//p" | head -1; }
 claim_card() {
     local id="$1" tags t out
     tags="$(card_field "$id" tags | tr -d '[]"'"'" | tr ',' ' ')"
+    # Fallback for a claim without --headless support; redundant once it has it.
     for t in $tags; do
         [[ ",$EXCLUDE," == *",$t,"* ]] && {
             echo "skip:tag $t is in overnight.exclude"
@@ -180,7 +204,8 @@ claim_card() {
         echo ok
         return
     fi
-    if out="$("$wf" claim "$id" 2>&1)"; then
+    # --headless: claim itself skips overnight.exclude tags and orders milestone cards first.
+    if out="$("$wf" claim "$id" --headless 2>&1)"; then
         echo ok
     elif printf '%s' "$out" | grep -q 'WIP limit'; then
         echo wip
@@ -202,7 +227,13 @@ run_card() {
     }
 
     if [ ! -d "$wt" ]; then
-        git worktree add -q -B "$branch" "$wt" "$base_branch" >>"$logs/$id-setup.log" 2>&1 || {
+        # An existing task branch (kept with its work by an earlier run) is
+        # checked out as it is; only a missing one starts from the base.
+        if git rev-parse -q --verify "refs/heads/$branch" >/dev/null; then
+            git worktree add -q "$wt" "$branch"
+        else
+            git worktree add -q -b "$branch" "$wt" "$base_branch"
+        fi >>"$logs/$id-setup.log" 2>&1 || {
             summary "$id" "could not create worktree (see $logs/$id-setup.log)"
             set_result failed
             return
@@ -228,7 +259,7 @@ run_card() {
         else
             args=(-p "/workflow:task $id --headless" --session-id "$sid")
         fi
-        supervise "$wt" "$logfile" "$outfile" "${args[@]}" --model "$model" "${perm[@]}" --output-format json
+        supervise "$id" "$wt" "$logfile" "$outfile" "${args[@]}" --model "$model" "${perm[@]}" --output-format json
         rc=$?
         out="$(cat "$outfile" 2>/dev/null)"
         newsid="$(printf '%s' "$out" | jq -r '.session_id // empty' 2>/dev/null)"
@@ -294,7 +325,6 @@ run_card() {
     finish_card failed
 }
 
-declare -A running=()
 done_ids=() failed_ids=()
 jarr() { printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != ""))'; }
 write_state() {
