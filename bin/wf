@@ -47,7 +47,7 @@ for a in "$@"; do
     outline) script=outline.sh ;;
     run | night) script=overnight-runner.sh ;;
     init) script=init.ts ;;
-    board) script=board/server.ts ;;
+    board) runtime help board ;;
     cards-commit) script=cmd/cards-commit.sh ;;
     help | -h | --help) break ;;
     esac

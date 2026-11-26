@@ -76,13 +76,8 @@ cat >.claude/workflow.json <<'JSON'
   "gates": [{ "name": "ok", "cmd": "true", "when": ["*"] }],
   "finish": { "mode": "none" }, "tracker": { "onMerge": "echo \"$WF_ISSUE\" >> .workflow/onmerge.log" } }
 JSON
-# Merge mode squashes by default; a wt-merge without --squash (before the shell side lands) merges plainly.
+# Merge mode squashes by default (finish.squash), through wt-merge --squash.
 merge_flag=--squash
-if ! "$repo/scripts/wt-merge.sh" --help | grep -q -- --squash; then
-    merge_flag=--merge
-    jq '.finish.squash = false' .claude/workflow.json >.claude/workflow.json.tmp
-    mv .claude/workflow.json.tmp .claude/workflow.json
-fi
 touch tasks/.keep
 git add -A
 git commit -qm "chore: init"

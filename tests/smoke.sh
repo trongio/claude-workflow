@@ -169,18 +169,15 @@ snap() { {
     "$wf" list
 } | md5sum; }
 before="$(snap)"
-card_help=1
-bun "$repo/scripts/wf.ts" help list >/dev/null 2>&1 || card_help=0 # per-command help lands with the TS side
 helps=(gates merge wt-init review-diff doc outline run night init board cards-commit)
-[ "$card_help" = 1 ] && helps+=(claim queue show list next move new prio stats root approve)
-for f in "$repo"/scripts/cmd/*.sh; do helps+=("$(basename "$f" .sh)"); done
+helps+=(claim queue show list next move new prio stats root approve)
+for f in "$repo"/scripts/cmd/*.sh "$repo"/scripts/cmd/*.ts; do helps+=("$(basename "${f%.*}")"); done
 for c in "${helps[@]}"; do
     out="$(timeout 20 "$wf" "$c" WF-2 --help 2>&1)" || die "wf $c --help exits non-zero: $out"
     [ -n "$out" ] || die "wf $c --help prints nothing"
 done
 for c in claim queue night move; do timeout 20 "$wf" "$c" --help >/dev/null 2>&1 || true; done
 [ "$(snap)" = "$before" ] && [ ! -d .workflow/.runner.lock ] && ok "--help never runs the command (no card moved, no queue file, no runner)" || die "--help had side effects"
-[ "$card_help" = 1 ] || echo "note: card command --help exit codes not checked (wf.ts help <cmd> not available yet)"
 "$wf" prune --help | grep -q 'set -e' && die "prune --help leaks code"
 "$wf" gates --help | grep -q 'Usage: wf gates' && ! "$wf" gates --help | grep -q 'gates.sh' && ok "help prints only the header comment, with the wf name" || die "gates --help"
 

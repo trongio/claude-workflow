@@ -146,7 +146,7 @@
     },
     "gatesTailLines": {
       "type": "integer",
-      "default": 30,
+      "default": 20,
       "description": "Lines of output shown per failing gate."
     },
     "worktree": {
@@ -399,6 +399,10 @@
         "log": {
           "type": "string",
           "default": ".workflow/release.log"
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Seconds before release.cmd is killed (default: the largest gate timeout, else 3600)."
         }
       }
     },

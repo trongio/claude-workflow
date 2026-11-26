@@ -207,8 +207,8 @@ Every command has `--help`; `wf help` lists them all.
 | `board.title`, `board.host`, `board.port` | `<repo> board`, 127.0.0.1, 8095 | the live board page |
 | `push` | false | whether `wf finish` may push; `finish.mode` `pr` requires true |
 | `gates[]` | detected | `{name, cmd, when, fix, cache, cwd, timeout, pending, release, inner, rerun: {when, max}, heavy}`; `inner: false` = release only |
-| `gatesCache`, `gatesCacheKeys`, `gatesJobs`, `gatesTailLines` | true, 8, CPU/2, 30 | cache switch; cache entries per gate so parallel worktrees do not evict each other; heavy gates at once; output lines per failing gate |
-| `release.cmd`, `release.log` | all release gates, `.workflow/release.log` | the full CI command that authorizes landing, and its log |
+| `gatesCache`, `gatesCacheKeys`, `gatesJobs`, `gatesTailLines` | true, 8, CPU/2, 20 | cache switch; cache entries per gate so parallel worktrees do not evict each other; heavy gates at once; output lines per failing gate |
+| `release.cmd`, `release.log`, `release.timeout` | all release gates, `.workflow/release.log`, largest gate timeout or 3600 | the full CI command that authorizes landing, its log, and how long it may run |
 | `testAffected.cmd`, `testAffected.map[]` (`src`, `tests`) | | map from source globs to tests for the inner loop |
 | `worktree.link`, `copy`, `cache`, `setup`, `env`, `pool` | detected, pool 0 | make each worktree runnable: dirs to hardlink, files to copy, copy-on-write build caches, setup commands, per-worktree env (`{id}`, `{slug}`, `{port}`), warm pool size |
 | `worktree.teardown` | [] | commands run when a worktree is removed, same placeholders, e.g. `dropdb --if-exists app_{slug}` |
