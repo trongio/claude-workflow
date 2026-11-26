@@ -1,33 +1,43 @@
 #!/usr/bin/env bun
-// wf-help: land a card: outcome check, owner hold, cards-commit, land per finish.mode, tracker hook, verifying, cleanup
+// wf-help: land a card: outcome check, clean tree, owner hold, release gates, cards-commit, land per finish.mode, tracker hook, verifying, cleanup
 import {
-    SCRIPTS, appendToSection, baseBranch, cardsCommit, changedFiles, classifyRisk, config, fail, findCard, gatesGreen, git, outcomeProse,
-    parseArgs, readCards, root, section, tail, taskBranch, teardown, today, update, withLock, worktreeOf,
+    SCRIPTS, appendToSection, approvedSha, baseBranch, cardsCommit, changedFiles, classifyRisk, config, fail, findCard, git, outcomeProse,
+    parkFields, parseArgs, readCards, readJson, releaseVerdict, root, section, tail, taskBranch, teardown, today, update, withLock, worktreeOf,
 } from '../lib.ts';
 
 const HELP = `Usage: wf finish ID [--force] [--mode pr|merge|none] [--no-cleanup]
 
-In order:
- 1. refuse unless every acceptance item is ticked and ## Outcome has prose (--force skips this);
- 2. high risk with review.ownerHoldHigh (default true) and no owner-approved field on the card:
-    park in owner-review and stop (approve with wf move ID owner-review --approve, then re-run);
- 3. wf cards-commit;
- 4. land per finish.mode:
-    pr     needs "push": true. Push the task branch, then open a PR unless one is open (a merged
-           PR for an older head is earlier work: a new PR is opened). finish.autoMerge merges it
-           when risk is not high and wf gates --release --json, run in the task worktree, is
-           green for the pushed head. A PR still open parks the card in owner-review and removes
-           the worktree when it is clean and pushed (the branch stays); run wf finish ID again
-           after the merge.
-    merge  wf merge into the base branch, only when the main checkout is already on it. Never pushes.
+In order, refusing before anything lands:
+ 1. every acceptance item ticked and ## Outcome has prose;
+ 2. the task worktree has no uncommitted or untracked files (up to 10 are listed);
+ 3. high risk with review.ownerHoldHigh (default true): held in owner-review unless the
+    owner approved the current branch tip (wf approve ID; a later commit needs a new approval);
+ 4. wf gates --release green for the branch tip: the recorded result is reused when it is for
+    that commit, else it runs in the task worktree. A gate skipped as "not in release" is fine;
+    any other skip, pending, timeout or failure is not green.
+--force skips 1, commits the dirty files of 2 as a wip commit, and lands past 4 with a note on
+the card. It never skips 3.
+Then wf cards-commit, and land per finish.mode:
+    pr     needs "push": true. Push the task branch, open a PR unless one is open for it.
+           finish.autoMerge merges it (squash unless finish.squash is false) when risk is not
+           high and the gates were green, pinned to the gated head. A PR still open parks
+           the card in owner-review (the worktree goes when clean and pushed; the branch
+           stays); run wf finish ID again after the merge. A merged PR counts only when its
+           head is the branch tip.
+    merge  wf merge into the base branch, only when the main checkout is already on it;
+           squashed into one commit "<title> (<ID>)" unless finish.squash is false. A
+           conflict leaves the base untouched and the card where it was. Never pushes.
     none   leave the branch.
- 5. tracker.onMerge with WF_ISSUE per #link;  6. move to verifying;
- 7. cleanup (finish.cleanup): worktree, local branch and resources; pr mode also deletes the
-    remote branch unless it is gone already.
-A landing failure leaves the card where it was, with a note. Never moves the main checkout's HEAD.`;
+Then tracker.onMerge with WF_ISSUE per #link, move to verifying, and cleanup (finish.cleanup):
+worktree, resources, and the branch only while its tip is the landed commit (pr mode deletes
+the remote branch under the same rule). A landing failure leaves the card where it was, with
+a note. Never moves the main checkout's HEAD.
+
+Example: wf finish T-12 --mode merge`;
 
 const { flags, args } = parseArgs(process.argv.slice(2), { force: 'bool', mode: 'string', 'no-cleanup': 'bool' }, HELP);
 const id = args[0] ?? fail(HELP, 2);
+const force = !!flags.force;
 const mode = String(flags.mode ?? config.finish?.mode ?? 'pr');
 if (!['pr', 'merge', 'none'].includes(mode)) fail('--mode must be pr, merge or none', 2);
 if (mode === 'pr' && config.push !== true) fail('push is false: set "push": true to open PRs, or use finish.mode merge|none', 2);
@@ -36,12 +46,15 @@ if (['verifying', 'done'].includes(card.status)) fail(`${card.id} is already ${c
 const branch = taskBranch(card);
 const base = baseBranch();
 const cleanup = config.finish?.cleanup !== false && !flags['no-cleanup'];
+const squash = config.finish?.squash !== false;
 const say = (s: string) => console.log(s);
 const run = (cmd: string[], cwd = root, env: Record<string, string> = {}) => {
     const r = Bun.spawnSync(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, ...env } });
-    return { ok: r.success, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
+    return { ok: r.success, code: r.exitCode, out: r.stdout.toString().trim(), err: r.stderr.toString().trim() };
 };
 const why = (r: { out: string; err: string }) => tail(`${r.out}\n${r.err}`) || '(no output)';
+const short = (sha: string) => sha.slice(0, 7);
+const tipOf = () => git(['rev-parse', '--verify', '--quiet', `${branch}^{commit}`]).out;
 const commitCards = (msg: string) => {
     const c = cardsCommit(msg);
     if (!c.ok) fail(`cards-commit failed:\n${c.out}`);
@@ -55,14 +68,14 @@ const setCard = (fields: Record<string, unknown>, note?: string) =>
         update(t, fields, fresh ? (text) => appendToSection(text, 'Notes', `- ${today()} ${note}`) : undefined);
     });
 // A landing failure leaves the card in its status, with a note saying why.
-const landFail = (msg: string): never => {
+const landFail = (msg: string, hint = ''): never => {
     setCard({}, `finish failed: ${msg.split('\n')[0]}`);
     cardsCommit(`docs(tasks): ${card.id} finish failed`);
-    fail(`land: ${msg}\n${card.id} stays ${card.status}`);
+    fail(`land: ${msg}\n${hint ? `${hint}\n` : ''}${card.id} stays ${card.status}`);
 };
 
 // 1. Outcome check: everything missing in one message.
-if (!flags.force) {
+if (!force) {
     const { done, total } = card.acceptance;
     const missing: string[] = [];
     if (!total) missing.push('no acceptance criteria on the card: add - [ ] items or pass --force');
@@ -70,38 +83,67 @@ if (!flags.force) {
     if (!outcomeProse(card.body)) missing.push(`## Outcome is missing or holds only the skeleton (wf outcome ${card.id}, then write the prose)`);
     if (missing.length) fail(`${card.id} is not ready to finish (or pass --force):\n${missing.map((m) => `  - ${m}`).join('\n')}`);
 }
-const hasBranch = git(['rev-parse', '--verify', '--quiet', `${branch}^{commit}`]).ok;
+const hasBranch = !!tipOf();
 if (!hasBranch && mode !== 'none') fail(`${card.id}: branch ${branch} not found`);
 const dir = worktreeOf(branch);
 
-// 2. Risk first: it decides the owner hold, and auto-merge never runs gates for high risk.
-const risk = hasBranch ? classifyRisk(changedFiles(base, branch, dir)) : { level: 'light' as const, file: '(no branch)' };
-if (risk.level === 'high' && config.review?.ownerHoldHigh !== false && !card.ownerApproved) {
-    setCard({ status: 'owner-review', blocked: `owner: high risk (${risk.file}); approve with wf move ${card.id} owner-review --approve, then wf finish ${card.id}` });
+// 2. Uncommitted work never lands half-way, and teardown never has to rescue it.
+if (dir) {
+    const dirty = git(['status', '--porcelain', '--untracked-files=all'], dir).out.split('\n').filter(Boolean).map((l) => l.replace(/^[ MTADRCU?!]{1,2} /, '')); // git() trims the first line's leading space
+    if (dirty.length && !force) {
+        const more = dirty.length > 10 ? `\n  +${dirty.length - 10} more` : '';
+        fail(`${card.id}: ${dir} has uncommitted work:\n${dirty.slice(0, 10).map((f) => `  ${f}`).join('\n')}${more}\ncommit or remove it, then wf finish ${card.id} again (--force commits it as wip)`);
+    }
+    if (dirty.length) {
+        const ok = git(['add', '-A'], dir).ok && git(['commit', '--quiet', '--no-verify', '-m', `wip: ${card.id} uncommitted work at wf finish --force`], dir).ok;
+        if (!ok) fail(`${card.id}: could not commit the uncommitted work in ${dir}`);
+        say(`--force: committed ${dirty.length} uncommitted path(s) as a wip commit on ${branch}`);
+    }
+}
+const tip = tipOf();
+
+// 3. Risk decides the owner hold; an approval binds to one commit.
+const risk = hasBranch ? classifyRisk(changedFiles(base, branch, dir)) : { level: 'light' as const, file: '(no branch)', pattern: '' };
+const approved = approvedSha(card);
+if (risk.level === 'high' && config.review?.ownerHoldHigh !== false && approved !== tip) {
+    const was = approved ? ` (approved ${short(approved)}, the branch is now at ${short(tip)})` : '';
+    setCard(parkFields(card, `owner: high risk (${risk.file})${was}; approve with wf approve ${card.id}, then wf finish ${card.id}`));
     commitCards(`docs(tasks): ${card.id} held for owner review (high risk)`);
-    say(`${card.id} -> owner-review: high risk (${risk.file}) needs the owner's approval before it lands`);
+    say(`${card.id} -> owner-review: high risk (${risk.file}) needs the owner's approval of ${short(tip)}${was}; the owner runs wf approve ${card.id}`);
     process.exit(0);
 }
 
-// 3. Commit the card changes so far (nothing new on a retry: no commit).
+// 4. Release gates green for this exact commit.
+const gates = hasBranch ? releaseProof() : { green: true, why: '' };
+if (!gates.green) {
+    const first = gates.why.split('\n')[0];
+    if (!force) fail(`${card.id}: release gates are not green for ${short(tip)}: ${gates.why}\nfix and commit in ${dir ?? 'the task worktree'}, then wf finish ${card.id} again (--force lands anyway, noted on the card)`);
+    setCard({}, `finish --force: landed WITHOUT green release gates at ${short(tip)} (${first})`);
+    console.error(`WARNING: --force lands ${short(tip)} without green release gates (${first}); noted on the card`);
+}
+
+// Commit the card changes so far (nothing new on a retry: no commit).
 commitCards(`docs(tasks): ${card.id} outcome`);
 
-// 4. Land.
+// 5. Land. `landed` is the commit that reached the base: the branch goes only while it is still its tip.
 let prMerged = false;
+let landed = tip;
 if (mode === 'none') {
     say(`land: none (${branch} left as is)`);
 } else if (mode === 'merge') {
     const current = git(['branch', '--show-current']).out;
     if (current !== base) landFail(`the main checkout is on ${current || 'a detached HEAD'}, not ${base}; wf finish never switches it (use finish.mode pr)`);
-    const r = run(['bash', `${SCRIPTS}wt-merge.sh`, branch, '--into', base, '-m', `merge: ${card.id} ${card.title}`]);
+    const msg = squash ? `${card.title} (${card.id})` : `merge: ${card.id} ${card.title}`;
+    const r = run(['bash', `${SCRIPTS}wt-merge.sh`, branch, '--into', base, ...(squash ? ['--squash'] : []), '-m', msg]);
+    if (r.code === 3) landFail(`merge conflict in: ${conflicts(`${r.out}\n${r.err}`)}`, `resolve on the task branch (rebase ${branch} onto ${base}) and run wf finish ${card.id} again`);
     if (!r.ok) landFail(`merge failed\n${why(r)}`);
     say(`land: ${r.out.split('\n').pop()}`);
 } else {
-    landPr();
+    landed = landPr();
     prMerged = true;
 }
 
-// 5. Tracker hook, once per linked issue.
+// 6. Tracker hook, once per linked issue.
 const hook = config.tracker?.onMerge;
 if (hook) {
     for (const issue of card.links.filter((l) => /^#?\d+$/.test(l)).map((l) => l.replace('#', ''))) {
@@ -110,27 +152,70 @@ if (hook) {
     }
 }
 
-// 6. Verifying: landed, not yet proven where it runs.
+// 7. Verifying: landed, not yet proven where it runs.
 setCard({ status: 'verifying', landed: today(), blocked: '' });
 say(`${card.id} -> verifying (wf move ${card.id} done --verified "how" once checked)`);
 commitCards(`docs(tasks): ${card.id} verifying`);
 
-// 7. Cleanup. Mode none never merged the branch, so it keeps it.
+// 8. Cleanup. Mode none never merged the branch, so it keeps it.
 if (mode === 'none') say('cleaned: nothing (mode none keeps the branch)');
 else if (cleanup) {
-    const r = dir ? teardown(dir, branch) : { cleaned: [] as string[], error: undefined };
+    const wt = worktreeOf(branch);
+    const r = wt ? teardown(wt, branch, { keepBranch: true }) : { cleaned: [] as string[], error: undefined };
     const cleaned = r.cleaned;
-    // A squash-merged branch is never an ancestor of the base: in pr mode the merged PR for this head
-    // proves it landed (-D); merge mode deletes it only when git agrees it is merged (-d).
-    if (!worktreeOf(branch) && git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).ok && git(['branch', prMerged ? '-D' : '-d', branch]).ok) cleaned.push('branch');
-    if (prMerged && run(['git', 'ls-remote', '--exit-code', '--heads', 'origin', branch]).ok && run(['git', 'push', '--quiet', 'origin', '--delete', branch]).ok) cleaned.push('remote branch');
+    const now = tipOf();
+    // Teardown may save a wip commit: work past the landed commit is never deleted.
+    const kept = !!now && now !== landed;
+    if (kept) say(`kept branch ${branch}: its tip ${short(now)} is not the landed ${short(landed)}`);
+    else if (now && !worktreeOf(branch) && git(['branch', '-D', branch]).ok) cleaned.push('branch');
+    if (prMerged && !kept) {
+        const remote = run(['git', 'ls-remote', '--heads', 'origin', branch]).out.split(/\s/)[0];
+        if (remote === landed && run(['git', 'push', '--quiet', 'origin', '--delete', branch]).ok) cleaned.push('remote branch');
+        else if (remote && remote !== landed) say(`kept remote branch ${branch}: origin has ${short(remote)}, not the landed ${short(landed)}`);
+    }
     if (r.error) console.error(`cleanup: ${r.error}`);
     say(`cleaned: ${cleaned.join(', ') || 'nothing'}`);
 }
+if (prMerged) pullHint();
 
-// pr mode: returns once the PR for the local head is merged; parks the card and exits while it is open.
-function landPr(): void {
-    const head = git(['rev-parse', `${branch}^{commit}`]).out;
+// The release verdict for the branch tip: the proof recorded on the card, else the worktree's
+// last gate run, else a fresh wf gates --release there. A green verdict is recorded on the card,
+// so the second finish of a PR (its worktree removed while it waited) still has it.
+function releaseProof(): { green: boolean; why: string } {
+    if (card.releaseGreen === tip) return { green: true, why: '' };
+    if (!dir) return { green: false, why: `the worktree of ${branch} is gone and no green release run is recorded for ${short(tip)} (wf start ${card.id} restores it)` };
+    const last = `${dir}/.workflow/gates-last.json`;
+    let v = releaseVerdict(readJson(last), tip);
+    if (!v.green && !force) {
+        const r = run([`${SCRIPTS}../bin/wf`, 'gates', '--release', '--json'], dir);
+        v = releaseVerdict(gateJson(r.out) ?? readJson(last), tip);
+        if (!v.green) v = { green: false, why: `${v.why}\n${why(r)}` };
+    }
+    if (!v.green) return v;
+    setCard({ 'release-green': tip });
+    say(`gates: release green at ${short(tip)}`);
+    return v;
+}
+
+// wt-merge names the conflicting files after a conflict line; keep the path-like lines.
+function conflicts(out: string): string {
+    const files = out
+        .split('\n')
+        .map((l) => l.trim().replace(/^(CONFLICT[^:]*:|conflict(s|ed)?( in)?:?)\s*/i, ''))
+        .filter((l) => /^\S+$/.test(l) && /[./]/.test(l));
+    return [...new Set(files)].slice(0, 10).join(', ') || tail(out, 3);
+}
+
+// After a forge merge the local base is behind origin: say how to catch up, never do it.
+function pullHint(): void {
+    const remote = run(['git', 'ls-remote', '--heads', 'origin', base]).out.split(/\s/)[0];
+    if (!remote || remote === git(['rev-parse', '--verify', '--quiet', base]).out || git(['merge-base', '--is-ancestor', remote, base]).ok) return;
+    say(`pull ${base} to pick up the merge: git -C ${root.replace(/\/$/, '')} pull --rebase`);
+}
+
+// pr mode: returns the merged head once the PR for the branch tip is merged; parks the card and exits while it is open.
+function landPr(): string {
+    const head = tip;
     type PR = { number?: number; state: string; url: string; headRefOid?: string };
     const view = (): PR | undefined => {
         const v = run(['gh', 'pr', 'view', branch, '--json', 'number,state,url,headRefOid'], dir ?? root);
@@ -141,14 +226,15 @@ function landPr(): void {
             return undefined;
         }
     };
-    // A PR's state is about THIS work only when its head is the local head: a
+    // A PR's state is about THIS work only when its head is the branch tip: a
     // merged PR for an older head (a reopened card) is history and proves nothing.
     const current = (p: PR | undefined) => !!p && p.headRefOid === head;
+    const merged = (p: PR | undefined): p is PR => p?.state === 'MERGED' && current(p);
     let pr = view();
-    if (!(pr?.state === 'MERGED' && current(pr))) {
+    if (!merged(pr)) {
         const push = run(['git', 'push', '--quiet', '-u', 'origin', `refs/heads/${branch}:refs/heads/${branch}`]);
         if (!push.ok) landFail(`push failed\n${why(push)}`);
-        say(`land: pushed ${branch} (${head.slice(0, 7)})`);
+        say(`land: pushed ${branch} (${short(head)})`);
         pr = view();
         if (pr?.state === 'OPEN') say(`land: updated ${pr.url}`);
         else {
@@ -160,14 +246,16 @@ function landPr(): void {
             say(`land: opened ${pr.url}`);
         }
     }
-    if (pr.state === 'OPEN' && config.finish?.autoMerge) pr = autoMerge(pr, head, current, view);
-    if (pr.state === 'MERGED') {
+    if (pr?.state === 'OPEN' && config.finish?.autoMerge) pr = autoMerge(pr, head, current, view);
+    if (merged(pr)) {
         say(`land: merged ${pr.url}`);
-        return;
+        return head;
     }
-    setCard({ status: 'owner-review', blocked: `owner: review and merge ${pr.url}, then wf finish ${card.id}` });
+    const url = pr?.url ?? '(no PR found)';
+    setCard(parkFields(card, `owner: review and merge ${url}, then wf finish ${card.id}`));
     commitCards(`docs(tasks): ${card.id} awaiting merge`);
-    say(`${pr.number ? `PR #${pr.number}` : `PR ${pr.url}`} open: card parked in owner-review; after it merges run \`wf finish ${card.id}\` again to move it to verifying and tear down`);
+    const state = pr?.state === 'MERGED' ? `merged at ${short(pr.headRefOid ?? '?')}, not the branch tip ${short(head)}` : 'open';
+    say(`${pr?.number ? `PR #${pr.number}` : `PR ${url}`} ${state}: card parked in owner-review; after it merges run \`wf finish ${card.id}\` again to move it to verifying and tear down`);
     // Nothing sits around while the PR waits: a clean, pushed worktree goes now; the branch stays.
     if (dir && cleanup) {
         const clean = !git(['status', '--porcelain'], dir).out;
@@ -182,17 +270,14 @@ function landPr(): void {
     process.exit(0);
 }
 
-// Merges only what was gated: risk not high (decided before any gate runs), the
-// release gates green in the task worktree at the local head, and the PR head
-// still that commit (gh --match-head-commit makes the last check atomic).
+// Merges only what was gated: risk not high, the release gates green at the branch tip (checked
+// above; a --force landing never auto-merges), and the PR head still that commit (gh
+// --match-head-commit makes the last check atomic).
 function autoMerge<P extends { state: string; url: string; headRefOid?: string }>(pr: P, head: string, current: (p: P) => boolean, view: () => P | undefined): P {
     if (risk.level === 'high') return note(pr, `high risk (${risk.file})`);
-    if (!dir) return note(pr, `the worktree of ${branch} is gone (release gates run only there; wf start ${card.id} restores it)`);
-    if (git(['rev-parse', 'HEAD'], dir).out !== head) return note(pr, `the worktree is not at ${branch}'s head`);
-    const gates = run([`${SCRIPTS}../bin/wf`, 'gates', '--release', '--json'], dir);
-    if (!gatesGreen(gateJson(gates.out))) return note(pr, `wf gates --release is not green\n${why(gates)}`);
-    if (!current(pr)) return note(pr, `the PR head is ${pr.headRefOid?.slice(0, 7) ?? '?'}, not the gated ${head.slice(0, 7)}`);
-    const m = run(['gh', 'pr', 'merge', pr.url, config.finish?.squash === false ? '--merge' : '--squash', '--match-head-commit', head], dir);
+    if (!gates.green) return note(pr, 'release gates not green (--force)');
+    if (!current(pr)) return note(pr, `the PR head is ${short(pr.headRefOid ?? '?')}, not the gated ${short(head)}`);
+    const m = run(['gh', 'pr', 'merge', pr.url, squash ? '--squash' : '--merge', '--match-head-commit', head], dir ?? root);
     if (!m.ok) landFail(`gh pr merge failed\n${why(m)}`);
     return view() ?? { ...pr, state: 'MERGED' };
 }
@@ -202,8 +287,8 @@ function note<P>(pr: P, reason: string): P {
     return pr;
 }
 
-// The gate report: one JSON line with `results`, `gates` or `ok` (the last such
-// line wins), else the whole output when it is one JSON document (older gates.sh).
+// The gate report: the last JSON line with `results`, `gates` or `ok`, else the whole
+// output when it is one JSON document.
 function gateJson(out: string): unknown {
     const report = (s: string) => {
         try {

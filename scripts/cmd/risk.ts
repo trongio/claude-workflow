@@ -10,23 +10,23 @@ not: any path matching a high pattern -> high; only *.md, docs/, tests/ or *.css
 High patterns are risk.high from .claude/workflow.json when it is set (it replaces
 the built-in list; [] turns high risk off), else a built-in list: migrations,
 *.sql and schema files, auth, billing and payments, security, infra/, deploy/,
-.github/workflows/, Dockerfiles. --explain prints the patterns in force.
-Patterns: * matches across directories, ? one character, a trailing / everything under it.`;
+.github/workflows/, Dockerfiles. --explain also prints the pattern that decided,
+then the patterns in force.
+Patterns: * matches across directories, ? one character, a trailing / everything under it.
+
+Example: wf risk main --explain`;
 
 const { flags, args } = parseArgs(process.argv.slice(2), { json: 'bool', explain: 'bool' }, HELP);
-if (flags.explain) {
-    const { globs, source } = highGlobs();
-    if (flags.json) console.log(JSON.stringify({ high: globs, source, light: LIGHT_GLOBS }));
-    else {
-        console.log(`high (${source === 'config' ? 'risk.high in .claude/workflow.json' : 'built-in; set risk.high to replace'}): ${globs.join(' ') || '(none: high risk is off)'}`);
-        console.log(`light (only these changed): ${LIGHT_GLOBS.join(' ')}`);
-        console.log('standard: anything else');
-    }
-    process.exit(0);
-}
 const base = args[0] ?? baseBranch();
 const here = git(['rev-parse', '--show-toplevel'], process.cwd()).out;
 const files = changedFiles(base, 'HEAD', here);
 const risk = classifyRisk(files);
-if (flags.json) console.log(JSON.stringify({ ...risk, base, files: files.length }));
-else console.log(`${risk.level} ${risk.file}`);
+const { globs, source } = highGlobs();
+if (flags.json) console.log(JSON.stringify({ ...risk, base, files: files.length, ...(flags.explain ? { high: globs, source, light: LIGHT_GLOBS } : {}) }));
+else if (flags.explain) {
+    console.log(`${risk.level} ${risk.file}`);
+    console.log(`  decided by: ${risk.pattern} (${files.length} file${files.length === 1 ? '' : 's'} changed since ${base})`);
+    console.log(`high (${source === 'config' ? 'risk.high in .claude/workflow.json' : 'built-in; set risk.high to replace'}): ${globs.join(' ') || '(none: high risk is off)'}`);
+    console.log(`light (only these changed): ${LIGHT_GLOBS.join(' ')}`);
+    console.log('standard: anything else');
+} else console.log(`${risk.level} ${risk.file}`);

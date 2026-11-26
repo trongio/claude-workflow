@@ -163,26 +163,48 @@ describe('sections', () => {
 describe('risk', () => {
     const high = ['db/', 'src/auth/*', '*.sql'];
     test('a risk.high path decides high', () => {
-        expect(lib.classifyRisk(['README.md', 'src/auth/login.ts'], high)).toEqual({ level: 'high', file: 'src/auth/login.ts' });
+        expect(lib.classifyRisk(['README.md', 'src/auth/login.ts'], high)).toMatchObject({ level: 'high', file: 'src/auth/login.ts' });
         expect(lib.classifyRisk(['x/y/m.sql'], high).level).toBe('high');
     });
     test('only docs, tests, markdown and css is light', () => {
-        expect(lib.classifyRisk(['docs/a.txt', 'tests/x.ts', 'web/a.css', 'pkg/README.md'], high)).toEqual({ level: 'light', file: 'docs/a.txt' });
-        expect(lib.classifyRisk([], high)).toEqual({ level: 'light', file: '(no changes)' });
+        expect(lib.classifyRisk(['docs/a.txt', 'tests/x.ts', 'web/a.css', 'pkg/README.md'], high)).toMatchObject({ level: 'light', file: 'docs/a.txt' });
+        expect(lib.classifyRisk([], high)).toMatchObject({ level: 'light', file: '(no changes)' });
     });
     test('anything else is standard, named by the first non-light file', () => {
-        expect(lib.classifyRisk(['docs/a.md', 'src/app.ts'], high)).toEqual({ level: 'standard', file: 'src/app.ts' });
-        expect(lib.classifyRisk(['src/app.ts'], [])).toEqual({ level: 'standard', file: 'src/app.ts' });
+        expect(lib.classifyRisk(['docs/a.md', 'src/app.ts'], high)).toMatchObject({ level: 'standard', file: 'src/app.ts' });
+        expect(lib.classifyRisk(['src/app.ts'], [])).toMatchObject({ level: 'standard', file: 'src/app.ts' });
+    });
+    test('the deciding pattern is the high glob that matched', () => {
+        expect(lib.classifyRisk(['README.md', 'src/auth/login.ts'], ['db/', '*/auth/*']).pattern).toBe('*/auth/*');
     });
 });
 
 describe('gates', () => {
-    test('green only when every gate passed or an explicit ok flag says so', () => {
-        expect(lib.gatesGreen([{ name: 'lint', status: 'pass' }, { name: 'test', status: 'cached' }])).toBe(true);
-        expect(lib.gatesGreen({ gates: [{ name: 'lint', status: 'skip' }] })).toBe(false);
-        expect(lib.gatesGreen({ ok: false, gates: [{ name: 'lint', status: 'pass' }] })).toBe(false);
-        expect(lib.gatesGreen([])).toBe(false);
-        expect(lib.gatesGreen(undefined)).toBe(false);
+    const sha = 'a'.repeat(40);
+    const run = (results: object[], extra: object = {}) => ({ sha, release: true, results, ...extra });
+    test('release green: every gate passed at that commit', () => {
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }, { name: 'test', status: 'cached' }]), sha).green).toBe(true);
+    });
+    test('a gate skipped as not in release is fine, any other skip is not', () => {
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }, { name: 'e2e', status: 'SKIP', reason: 'not in release' }]), sha).green).toBe(true);
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }, { name: 'e2e', status: 'SKIP', reason: 'no matching changes' }]), sha).green).toBe(false);
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }, { name: 'e2e', status: 'SKIP' }]), sha).green).toBe(false);
+    });
+    test('pending, failing, another commit, a non-release run or no gate is not green', () => {
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PENDING', reason: 'pending' }]), sha).why).toContain('lint PENDING');
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'FAIL' }]), sha).green).toBe(false);
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }]), 'b'.repeat(40)).green).toBe(false);
+        expect(lib.releaseVerdict(run([{ name: 'lint', status: 'PASS' }], { release: false }), sha).green).toBe(false);
+        expect(lib.releaseVerdict(run([{ name: 'e2e', status: 'SKIP', reason: 'not in release' }]), sha).green).toBe(false);
+        expect(lib.releaseVerdict(undefined, sha).green).toBe(false);
+    });
+});
+
+describe('owner approval', () => {
+    test('binds to a full sha; a legacy date-only value binds to nothing', () => {
+        const card = (v: string) => ({ ownerApproved: v }) as Parameters<typeof lib.approvedSha>[0];
+        expect(lib.approvedSha(card(`${'c'.repeat(40)} 2026-11-26`))).toBe('c'.repeat(40));
+        expect(lib.approvedSha(card('2026-11-26'))).toBe('');
     });
 });
 

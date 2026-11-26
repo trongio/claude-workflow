@@ -73,8 +73,16 @@ mkdir -p tasks .claude
 echo ".workflow/" >.gitignore
 cat >.claude/workflow.json <<'JSON'
 { "idPrefix": "T", "baseBranch": "main", "wipLimit": 3, "risk": { "high": ["db/"] },
+  "gates": [{ "name": "ok", "cmd": "true", "when": ["*"] }],
   "finish": { "mode": "none" }, "tracker": { "onMerge": "echo \"$WF_ISSUE\" >> .workflow/onmerge.log" } }
 JSON
+# Merge mode squashes by default; a wt-merge without --squash (before the shell side lands) merges plainly.
+merge_flag=--squash
+if ! "$repo/scripts/wt-merge.sh" --help | grep -q -- --squash; then
+    merge_flag=--merge
+    jq '.finish.squash = false' .claude/workflow.json >.claude/workflow.json.tmp
+    mv .claude/workflow.json.tmp .claude/workflow.json
+fi
 touch tasks/.keep
 git add -A
 git commit -qm "chore: init"
@@ -98,7 +106,7 @@ shift 2
 tip() { git ls-remote origin "refs/heads/$1" | cut -f1; }
 case "$sub" in
 view)
-    pr="$(jq -c --arg b "$1" '[.[] | select(.head == $b)] | (map(select(.state == "OPEN")) + .) | .[0] // empty' "$GH_STATE")"
+    pr="$(jq -c --arg b "$1" '[.[] | select(.head == $b)] | (map(select(.state == "OPEN")) + reverse) | .[0] // empty' "$GH_STATE")"
     [ -n "$pr" ] || { echo "no pull requests found for branch \"$1\"" >&2; exit 1; }
     head="$(jq -r '.mergedHead // empty' <<<"$pr")"
     [ -n "$head" ] || head="$(tip "$1")"
@@ -152,6 +160,15 @@ ready() {
 }
 count() { git log --format=%s | grep -c -- "$1" || true; }
 
+# wf new refuses unknown flags; --accept repeats into acceptance lines.
+code=0
+"$wf" new "Typo" --sizee S >"$dir.out" 2>&1 || code=$?
+[ "$code" = 2 ] && grep -q 'unknown flag --sizee' "$dir.out" && grep -q '^Usage: wf new' "$dir.out" && [ -z "$(ls tasks/T-*.md 2>/dev/null)" ] &&
+    ok "new refuses an unknown flag with usage, exit 2, no card" || die "new unknown flag (exit $code): $(cat "$dir.out")"
+"$wf" new "Accept" --accept "exports 10k rows" --accept "ka headers" >/dev/null
+[ "$(grep -c '^- \[ \] ' tasks/T-1-accept.md)" = 2 ] && grep -qx -- '- \[ \] ka headers' tasks/T-1-accept.md && ok "new --accept writes one acceptance line each" || die "new --accept: $(cat tasks/T-1-*.md)"
+rm -f tasks/T-*.md
+
 # wf new under the lock: five at once get five ids.
 for _ in 1 2 3 4 5; do "$wf" new "Parallel card" >/dev/null & done
 wait
@@ -183,6 +200,9 @@ commit_in "$wt" feature.txt
 (cd "$wt" && "$wf" risk) | grep -q '^standard feature.txt$' && ok "risk standard" || die "risk standard"
 mkdir -p "$wt/db" && echo x >"$wt/db/m.sql"
 (cd "$wt" && "$wf" risk --json) | jq -e '.level == "high" and .file == "db/m.sql"' >/dev/null && ok "risk high from uncommitted file" || die "risk high"
+(cd "$wt" && "$wf" risk --explain) >"$dir/.explain"
+[ "$(sed -n 1p "$dir/.explain")" = "high db/m.sql" ] && grep -q '^  decided by: db/ ' "$dir/.explain" && grep -q '^high (risk.high in .claude/workflow.json): db/$' "$dir/.explain" &&
+    grep -q '^light ' "$dir/.explain" && ok "risk --explain: level, deciding file and pattern, then the lists" || die "risk --explain: $(cat "$dir/.explain")"
 rm -rf "$wt/db"
 
 # finish refuses without ticks and outcome
@@ -232,8 +252,20 @@ commit_in "$dir/.workflow/worktrees/T-5" db/m.sql
 "$wf" outcome T-5 --tick 1 >/dev/null && write_prose T-5
 expect "finish high risk (mode merge)" "$wf" finish T-5 --mode merge
 [ "$(field T-5 status)" = owner-review ] && grep -q 'high risk (db/m.sql)' "$dir.out" && [ ! -f db/m.sql ] && ok "high risk parked in owner-review, not merged" || die "owner hold: $(cat "$dir.out")"
-expect "move --approve" "$wf" move T-5 owner-review --approve
-[ -n "$(field T-5 owner-approved)" ] && ok "--approve records owner-approved" || die "owner-approved"
+refuse "move --approve is gone" "$wf" move T-5 owner-review --approve
+grep -q 'wf approve T-5' "$dir.out" && ok "move --approve points at wf approve" || die "move --approve: $(cat "$dir.out")"
+refuse "approve refused headless" env WF_HEADLESS=1 "$wf" approve T-5
+[ -z "$(field T-5 owner-approved)" ] && ok "headless approve records nothing" || die "headless approve recorded"
+expect "wf approve" "$wf" approve T-5
+tip5="$(git rev-parse wf/T-5)"
+[ "$(field T-5 owner-approved | cut -d' ' -f1)" = "$tip5" ] && [ "$(field T-5 status)" = in-progress ] && [ "$(field T-5 blocked)" = '""' ] &&
+    ok "approve binds the tip sha, clears blocked, restores in-progress" || die "approve fields: $(sed -n '1,20p' tasks/T-5-*.md)"
+"$wf" status | grep -q 'waiting on owner' && die "approved card still waiting on owner: $("$wf" status)" || ok "approved card leaves waiting on owner"
+commit_in "$dir/.workflow/worktrees/T-5" db/later.sql
+expect "finish after a commit past the approval" "$wf" finish T-5 --mode merge
+[ "$(field T-5 status)" = owner-review ] && grep -q "approved ${tip5:0:7}, the branch is now at" "$dir.out" && [ ! -f db/m.sql ] &&
+    ok "a commit after approval re-holds" || die "re-hold: $(cat "$dir.out")"
+expect "wf approve again" "$wf" approve T-5
 expect "finish approved high risk" "$wf" finish T-5 --mode merge
 [ "$(field T-5 status)" = verifying ] && [ -f db/m.sql ] && ok "approved high risk lands" || die "approved landing"
 
@@ -278,19 +310,20 @@ expect "finish reopened T-6" "$wf" finish T-6
 # autoMerge: gates run only in the task worktree, merge pins the gated head.
 set_config ".finish.autoMerge = true | .gates = [{\"name\": \"ok\", \"cmd\": \"touch $dir.gates-ran\", \"when\": [\"*\"]}]"
 expect "finish T-6 with autoMerge and no worktree" "$wf" finish T-6
-grep -q 'no auto-merge, the worktree of wf/T-6 is gone' "$dir.out" && [ ! -e "$dir.gates-ran" ] && ok "autoMerge refuses without the worktree, no gates at root" || die "autoMerge no worktree: $(cat "$dir.out")"
+[ "$(field T-6 status)" = verifying ] && [ ! -e "$dir.gates-ran" ] && [ "$(jq -r '.[1].state' "$GH_STATE")" = MERGED ] &&
+    ok "autoMerge with the worktree gone uses the green run recorded for that head, no gates at root" || die "autoMerge no worktree: $(cat "$dir.out")"
 "$wf" new "Auto" >/dev/null && criterion T-7 && git add -A && git commit -qm "chore(tasks): T-7" -q
 ready T-7 auto.txt
 expect "finish T-7 (autoMerge)" "$wf" finish T-7
 head7="$(sed -n 's/^land: pushed wf\/T-7 (\(.*\))$/\1/p' "$dir.out")"
-[ -e "$dir.gates-ran" ] && [ "$(field T-7 status)" = verifying ] && [ -n "$head7" ] && grep -q -- "--squash --match-head-commit $head7" "$GH_LOG" && ok "autoMerge merged the gated head" || die "autoMerge: $(cat "$dir.out")"
+[ -e "$dir.gates-ran" ] && [ "$(field T-7 status)" = verifying ] && [ -n "$head7" ] && grep -q -- "$merge_flag --match-head-commit $head7" "$GH_LOG" && ok "autoMerge merged the gated head" || die "autoMerge: $(cat "$dir.out")"
 rm -f "$dir.gates-ran"
 "$wf" new "Auto risky" >/dev/null && criterion T-8 && git add -A && git commit -qm "chore(tasks): T-8" -q
 "$wf" start T-8 >/dev/null && mkdir -p "$dir/.workflow/worktrees/T-8/db" && commit_in "$dir/.workflow/worktrees/T-8" db/x.sql
-"$wf" outcome T-8 --tick 1 >/dev/null && write_prose T-8 && "$wf" move T-8 in-progress --approve >/dev/null
+"$wf" outcome T-8 --tick 1 >/dev/null && write_prose T-8 && "$wf" approve T-8 >/dev/null
 expect "finish T-8 (autoMerge, high risk)" "$wf" finish T-8
-grep -q 'no auto-merge, high risk (db/x.sql)' "$dir.out" && [ ! -e "$dir.gates-ran" ] && [ "$(field T-8 status)" = owner-review ] &&
-    ok "autoMerge refuses high risk before running gates" || die "autoMerge high risk: $(cat "$dir.out")"
+grep -q 'no auto-merge, high risk (db/x.sql)' "$dir.out" && [ "$(field T-8 status)" = owner-review ] && [ "$(jq -r '.[3].state' "$GH_STATE")" = OPEN ] &&
+    ok "autoMerge never merges approved high risk: the PR waits for the owner" || die "autoMerge high risk: $(cat "$dir.out")"
 set_config '.finish.autoMerge = false'
 
 # A landing failure keeps the card where it was, with one note however often it is retried.
@@ -344,7 +377,7 @@ expect "new card Delta" "$wf" new "Delta"
 expect "park" "$wf" park T-4 'pick A or B? $&'
 [ "$(field T-4 status)" = owner-review ] && ok "parked in owner-review" || die "park"
 "$wf" status >"$dir/.status"
-grep -q 'waiting on owner (3)' "$dir/.status" && grep -q 'verifying (3)' "$dir/.status" && [ "$(wc -l <"$dir/.status")" -le 25 ] && ok "status" || die "status: $(cat "$dir/.status")"
+grep -q 'waiting on owner (2)' "$dir/.status" && grep -q 'verifying (4)' "$dir/.status" && [ "$(wc -l <"$dir/.status")" -le 25 ] && ok "status" || die "status: $(cat "$dir/.status")"
 "$wf" handoff >"$dir/.handoff"
 [ "$(wc -l <"$dir/.handoff")" = 5 ] && grep -q '^## Verifying' .workflow/HANDOFF.md && grep -q 'T-2 (verifying): Shipped it.' .workflow/HANDOFF.md && ok "handoff" || die "handoff"
 printf '# Plan\n\nContext line.\n\n## Stream 1: api\n\nDo the api.\n\n## Stream 2: ui\n\nDo the ui.\n' >"$dir/plan.md"
@@ -354,5 +387,63 @@ grep -q 'Do the ui.' .workflow/briefs/T-4-s2.md && ! grep -q 'Do the api.' .work
 git commit -q --allow-empty -m "fix(cards): lock race"
 git commit -q --allow-empty -m "fix(cards): another lock race"
 "$wf" fix-sweep | grep -q '^cards ' && ok "fix-sweep clusters by scope" || die "fix-sweep"
+
+# ---------------------------------------------------------------- fix round 2: finish safety, approve, help
+# newcard TITLE: create, add a criterion, commit; prints the id.
+newcard() {
+    local id
+    id="$("$wf" new "$1" | cut -d' ' -f1)"
+    criterion "$id"
+    git add -A tasks && git commit -qm "chore(tasks): $id" -q
+    echo "$id"
+}
+snapshot() { (cd "$dir" && find tasks .workflow -type f ! -path '.workflow/worktrees/*' -print0 2>/dev/null | sort -z | xargs -0 md5sum; git rev-parse HEAD; git worktree list) | md5sum; }
+
+# Every card command's --help prints help, exits 0 and changes nothing, wherever the flag sits.
+before="$(snapshot)"
+for c in "list --help" "next 2 --help" "claim T-2 --dry-run --help" "show T-2 -h" "move T-2 done --force --help" "new Junk --size S --help" \
+    "prio T-2 1 --help" "queue 3 --help" "stats --help" "root --help" "approve T-5 --help" "board --help" \
+    "start T-3 --help" "finish T-2 --force --help" "outcome T-2 --tick 1 --help" "note T-2 text --help" "park T-2 question --help" \
+    "status --help" "handoff --help" "brief T-4 --stream 1 --help" "plan-save T-4 x.md --help" "fix-sweep --help" "risk --explain --help"; do
+    # shellcheck disable=SC2086 # word splitting is the point
+    "$wf" $c >"$dir.out" 2>&1 || die "wf $c exited non-zero: $(cat "$dir.out")"
+    grep -q '^Usage: wf ' "$dir.out" || die "wf $c printed no usage: $(cat "$dir.out")"
+done
+[ "$(snapshot)" = "$before" ] && [ ! -d .workflow/queue ] && ok "--help on every card command: usage, exit 0, no card, queue or git change" || die "--help changed state"
+for c in list next claim show move new prio queue stats root approve; do
+    bun "$repo/scripts/wf.ts" help "$c" | grep -q "^Example: wf $c" || die "wf.ts help $c has no example"
+done
+ok "wf.ts help <cmd> has usage and an example for every card command"
+
+# A dirty worktree is refused before anything lands; --force commits it as wip first.
+id="$(newcard "Dirty")"
+ready "$id" dirty1.txt
+echo wip >"$dir/.workflow/worktrees/$id/untracked.txt"
+echo edit >>"$dir/.workflow/worktrees/$id/dirty1.txt"
+refuse "finish refuses a dirty worktree" "$wf" finish "$id" --mode merge
+grep -q 'has uncommitted work' "$dir.out" && grep -q '^  untracked.txt$' "$dir.out" && grep -q '^  dirty1.txt$' "$dir.out" && [ ! -f dirty1.txt ] && [ "$(field "$id" status)" = in-progress ] &&
+    ok "dirty refusal lists the paths, nothing merged, card stays" || die "dirty refusal: $(cat "$dir.out")"
+expect "finish --force on a dirty worktree" "$wf" finish "$id" --mode merge --force
+grep -q 'committed 2 uncommitted path(s) as a wip commit' "$dir.out" && [ -f untracked.txt ] && [ "$(field "$id" status)" = verifying ] &&
+    ok "--force commits the dirty work as wip, then lands it" || die "dirty --force: $(cat "$dir.out")"
+
+# Red release gates never land, in any mode; a green run for an older commit is not reused.
+id="$(newcard "Red")"
+ready "$id" red.txt
+wtr="$dir/.workflow/worktrees/$id"
+(cd "$wtr" && "$wf" gates --release >/dev/null) || die "gates --release in the worktree"
+jq '.gates = [{"name": "red", "cmd": "false", "when": ["*"]}]' "$wtr/.claude/workflow.json" >"$wtr/cfg.tmp" && mv "$wtr/cfg.tmp" "$wtr/.claude/workflow.json"
+git -C "$wtr" commit -qam "chore: red gate"
+refuse "finish merge with red gates" "$wf" finish "$id" --mode merge
+grep -q "release gates are not green for $(git rev-parse --short=7 "wf/$id")" "$dir.out" && grep -q 'red FAIL' "$dir.out" && [ ! -f red.txt ] &&
+    ok "merge mode: red gates (older green run ignored) refuse, nothing merged" || die "red merge: $(cat "$dir.out")"
+set_config '.push = true'
+prs="$(jq length "$GH_STATE")"
+refuse "finish pr with red gates" "$wf" finish "$id" --mode pr
+[ -z "$(git ls-remote origin "refs/heads/wf/$id")" ] && [ "$(jq length "$GH_STATE")" = "$prs" ] && ok "pr mode: red gates refuse before push or PR" || die "red pr: $(cat "$dir.out")"
+set_config '.push = false'
+"$wf" finish "$id" --mode merge --force >"$dir.out" 2>&1 || die "finish --force red: $(cat "$dir.out")"
+grep -q 'WARNING: --force lands' "$dir.out" && grep -q 'landed WITHOUT green release gates' tasks/"$id"-*.md && [ -f red.txt ] &&
+    ok "--force lands red gates with a loud note on the card" || die "red --force: $(cat "$dir.out")"
 
 echo "cards.sh: $pass passed ($dir)"

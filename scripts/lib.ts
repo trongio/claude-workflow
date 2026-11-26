@@ -22,6 +22,10 @@ export type Card = {
     done?: string;
     verified?: string;
     ownerApproved?: string;
+    // The branch tip a green wf gates --release run was seen at (wf finish records it).
+    releaseGreen?: string;
+    // The status a card had when it was parked in owner-review (wf approve restores it).
+    parkedFrom?: string;
     branch?: string;
     acceptance: { done: number; total: number };
     body: string;
@@ -171,6 +175,8 @@ export function parseCard(text: string, file: string, withBody = true): Card | n
         done: str('done'),
         verified: str('verified'),
         ownerApproved: str('owner-approved'),
+        releaseGreen: str('release-green'),
+        parkedFrom: str('parked-from'),
         branch: str('branch'),
         acceptance: { done: checks.filter((c) => /\[[xX]\]/.test(c)).length, total: checks.length },
         body,
@@ -435,13 +441,33 @@ export function baseBranch(): string {
 export const taskBranch = (card: Card) => card.branch ?? `wf/${card.id}`;
 export const worktreePath = (id: string) => `${root}.workflow/worktrees/${id}`;
 
-// Worktree that has `branch` checked out, if any.
-export function worktreeOf(branch: string): string | undefined {
+// Branch -> worktree path for every worktree with a branch checked out (one git call).
+export function worktrees(): Map<string, string> {
+    const map = new Map<string, string>();
     for (const b of git(['worktree', 'list', '--porcelain']).out.split('\n\n')) {
-        if (b.split('\n').includes(`branch refs/heads/${branch}`)) return b.match(/^worktree (.*)$/m)?.[1];
+        const dir = b.match(/^worktree (.*)$/m)?.[1];
+        const br = b.match(/^branch refs\/heads\/(.*)$/m)?.[1];
+        if (dir && br) map.set(br, dir);
     }
-    return undefined;
+    return map;
 }
+
+// Worktree that has `branch` checked out, if any.
+export const worktreeOf = (branch: string): string | undefined => worktrees().get(branch);
+
+// An in-flight card that was started (it records a branch) but whose worktree is gone, e.g. after wf prune.
+export const worktreeGone = (card: Card, trees: Map<string, string>): boolean => ACTIVE.includes(card.status) && !!card.branch && !trees.has(card.branch);
+export const goneHint = (id: string) => `worktree gone: wf start ${id} to resume or wf move ${id} backlog`;
+
+// Fields that park a card in owner-review, remembering where it came from (a re-park keeps the first origin).
+export const parkFields = (card: Card, blocked: string): Record<string, unknown> => ({
+    status: 'owner-review',
+    blocked,
+    'parked-from': card.status === 'owner-review' ? (card.parkedFrom ?? '') : card.status,
+});
+
+// The commit an owner approval binds to (owner-approved: <sha> <date>); a legacy date-only value binds to nothing.
+export const approvedSha = (card: Card): string => (card.ownerApproved?.split(/\s+/)[0] ?? '').match(/^[0-9a-f]{40}$/)?.[0] ?? '';
 
 // Files changed on `head` since it left `base`; with `dir`, uncommitted and untracked files there too.
 export function changedFiles(base: string, head = 'HEAD', dir?: string): string[] {
@@ -482,21 +508,22 @@ export function highGlobs(): { globs: string[]; source: 'config' | 'built-in' } 
     const high = config.risk?.high;
     return Array.isArray(high) ? { globs: high, source: 'config' } : { globs: DEFAULT_HIGH, source: 'built-in' };
 }
-export type Risk = { level: 'high' | 'standard' | 'light'; file: string };
+// `pattern` is the rule that decided: the high glob the file matched, or why it is standard or light.
+export type Risk = { level: 'high' | 'standard' | 'light'; file: string; pattern: string };
 
 export function classifyRisk(files: string[], high: string[] = highGlobs().globs): Risk {
     const hi = globsToRegex(high);
     const light = globsToRegex(LIGHT_GLOBS);
     const h = high.length ? files.find((f) => hi.test(f)) : undefined;
-    if (h) return { level: 'high', file: h };
+    if (h) return { level: 'high', file: h, pattern: high.find((g) => globsToRegex([g]).test(h)) ?? '?' };
     const s = files.find((f) => !light.test(f));
-    if (s) return { level: 'standard', file: s };
-    return { level: 'light', file: files[0] ?? '(no changes)' };
+    if (s) return { level: 'standard', file: s, pattern: `matches no light pattern (${LIGHT_GLOBS.join(' ')})` };
+    return { level: 'light', file: files[0] ?? '(no changes)', pattern: files.length ? `every file matches a light pattern (${LIGHT_GLOBS.join(' ')})` : 'no changes' };
 }
 
 // ---------------------------------------------------------------- gates
 
-type GateRow = { name: string; status: string; seconds?: number };
+type GateRow = { name: string; status: string; seconds?: number; reason: string };
 // Tolerant reader for .workflow/gates-last.json (written by wf gates): an array
 // of rows, or an object holding one under `gates`/`results`.
 export function gateRows(json: unknown): GateRow[] {
@@ -507,15 +534,25 @@ export function gateRows(json: unknown): GateRow[] {
         name: String(g.name ?? g.gate ?? '?'),
         status: String(g.status ?? g.result ?? (g.ok === true ? 'pass' : g.ok === false ? 'fail' : '?')),
         seconds: typeof g.seconds === 'number' ? g.seconds : typeof g.duration === 'number' ? g.duration : undefined,
+        reason: typeof g.reason === 'string' ? g.reason : '',
     }));
 }
 
-// Green only when explicitly green: a missing or skipped gate is not proven.
-export function gatesGreen(json: unknown): boolean {
-    const o = json as Record<string, unknown>;
-    if (o && typeof o === 'object' && !Array.isArray(o) && (typeof o.ok === 'boolean' || typeof o.green === 'boolean')) return o.ok === true || o.green === true;
+const PASSED = /^(pass|ok|cached|green)$/i;
+
+// Release green for one commit: a --release run at `sha` where every gate passed, or was
+// skipped only because it is not part of the release (release: false). Anything else
+// (pending, timeout, a skip for another reason, no gate at all) is not proven.
+export function releaseVerdict(json: unknown, sha: string): { green: boolean; why: string } {
+    const o = json as Record<string, unknown> | undefined;
+    if (!o || typeof o !== 'object') return { green: false, why: 'no gate result' };
+    if (o.sha !== sha) return { green: false, why: `last gate run is for ${String(o.sha ?? '?').slice(0, 7)}, not ${sha.slice(0, 7)}` };
+    if (o.release !== true) return { green: false, why: 'last gate run was not --release' };
     const rows = gateRows(json);
-    return rows.length > 0 && rows.every((r) => /^(pass|ok|cached|green)$/i.test(r.status));
+    const bad = rows.filter((r) => !PASSED.test(r.status) && !(/^skip/i.test(r.status) && r.reason === 'not in release'));
+    if (bad.length) return { green: false, why: bad.map((r) => `${r.name} ${r.status}${r.reason ? ` (${r.reason})` : ''}`).join(', ') };
+    if (!rows.some((r) => PASSED.test(r.status))) return { green: false, why: 'no gate ran' };
+    return { green: true, why: '' };
 }
 
 export function readJson(path: string): unknown {
@@ -595,14 +632,15 @@ export function headerHelp(file: string): string {
 
 // Strict flag parser for cmd/ scripts: unknown flags are an error, --help prints `help`.
 export function parseArgs(argv: string[], spec: Record<string, 'bool' | 'string'>, help: string) {
+    // Help wins wherever it appears, before any other flag is judged: nothing else runs.
+    if (argv.includes('-h') || argv.includes('--help')) {
+        console.log(help);
+        process.exit(0);
+    }
     const flags: Record<string, string | boolean> = {};
     const args: string[] = [];
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
-        if (a === '-h' || a === '--help') {
-            console.log(help);
-            process.exit(0);
-        }
         if (!a.startsWith('--')) {
             args.push(a);
             continue;
