@@ -131,7 +131,9 @@ wf gates --release
 
 The full gate: every release gate, uncached, or `release.cmd`. A subset of
 gates is not green; skipped or pending means not proven; a missing tool is red.
-Only an all-PASS table lets the task land.
+Only an all-PASS table lets the task land (a gate skipped as "not in release"
+is fine). `wf finish` checks this itself for the branch tip and reruns the
+release gates in the worktree when the last result is for another commit.
 
 ## 9. Outcome
 
@@ -148,15 +150,18 @@ boxes that a test or an observed verification proved.
 
 High risk and `review.ownerHoldHigh` (default true), or a card that says the
 owner signs off: `wf park <ID> "owner: <what to decide>"` and stop. The owner
-approves with `wf move <ID> todo --approve` (records `owner-approved:`).
+approves with `wf approve <ID>`: it records `owner-approved: <sha> <date>` for
+the branch tip, clears `blocked` and restores the card's earlier status.
 `wf finish` enforces the same hold in every finish mode: a high-risk card
-without `owner-approved:` parks in `owner-review` instead of landing. Never
-set `--approve` yourself; only the owner does.
+whose tip is not the approved commit parks in `owner-review` instead of
+landing, so a commit after the approval needs a new one. Never run
+`wf approve` yourself; only the owner does (headless sessions are refused).
 
 ## 11. Finish and clean up
 
 ```bash
-wf finish <ID>     # outcome check, cards-commit, land per finish.mode, tracker.onMerge,
+wf finish <ID>     # outcome check, clean worktree, owner hold, release gates for the tip,
+                   # cards-commit, land per finish.mode, tracker.onMerge,
                    # tear down worktree, DB, ports (worktree.teardown)
 wf doctor          # must show no leftovers (worktrees, locks, orphan servers) before you report done
 ```
@@ -168,12 +173,17 @@ Per `finish.mode`:
   `owner-review` until the PR merges. After the merge, run `wf finish <ID>`
   again: it moves the card to `verifying` and deletes the branch. The main
   checkout is never touched.
-- `merge`: merges into `baseBranch` under the lock, card -> `verifying`. Only
-  when nothing serves from the main checkout. Never pushes.
+- `merge`: squash-merges into `baseBranch` under the lock (one commit
+  `<title> (<ID>)`; `finish.squash: false` merges plainly), card ->
+  `verifying`. Only when nothing serves from the main checkout. Never pushes.
+  A conflict leaves the base untouched and the card where it was: rebase the
+  task branch onto the base and run `wf finish <ID>` again.
 - `none`: leaves the branch. Never pushes.
 
-Teardown aborts rather than lose uncommitted work: commit or discard it, then
-rerun. If `wf doctor` lists leftovers you created, remove them
+`wf finish` refuses while the worktree has uncommitted or untracked files:
+commit or discard them, then rerun (`--force` commits them as wip). In `pr`
+mode, after the merge it prints the `git pull --rebase` for the main checkout
+when the local base is behind; run it yourself when nothing else uses it. If `wf doctor` lists leftovers you created, remove them
 (`wf orphans --kill <ID>`, `wf prune --apply <ID>`) and run it again; a bare
 `wf orphans --kill` refuses.
 

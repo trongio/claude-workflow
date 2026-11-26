@@ -25,8 +25,8 @@ your prose is the record.
    its next step as soon as its own agents report. Never wait for one card's
    reviewer before starting another card's implementer; there is no lockstep.
 3. Only landing is serialised: `wf finish` holds the repo lock. Before a
-   card lands after another one, rebase its branch on the updated base and
-   re-run `wf gates --release`.
+   card lands after another one, rebase its branch on the updated base;
+   `wf finish` then reruns `wf gates --release` for the new tip itself.
 4. When a card lands in `verifying` or parks in `owner-review` (a decision,
    a high-risk hold, or in `pr` mode a PR waiting to merge) and the argument
    was `drain`, `wf claim 1` and continue. Otherwise stop when the claimed

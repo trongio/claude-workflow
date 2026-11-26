@@ -17,6 +17,11 @@ Strings may use {{env.NAME}} so credentials stay out of the file.
 On failure: the step's error, a screenshot and the last 20 console lines. Exit 1 on failure, 2 on bad usage.`;
 
 const argv = process.argv.slice(2);
+// Help wins wherever it appears: nothing else runs.
+if (argv.includes('-h') || argv.includes('--help')) {
+    console.log(HELP);
+    process.exit(0);
+}
 let file = '';
 let json = false;
 const o: FlowOpts = { base: devBase(), shotDir: '', timeout: 10000 };

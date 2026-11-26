@@ -38,7 +38,7 @@ const config = {
     idPrefix: idPrefix(),
     baseBranch: base,
     wipLimit: 2,
-    milestone: { label: 'v1' },
+    milestone: { label: 'milestone' },
     gates,
     ...(testAffected ? { testAffected } : {}),
     ...(releaseCmd ? { release: { cmd: releaseCmd } } : {}),

@@ -126,6 +126,21 @@ if ! command -v shellcheck >/dev/null; then
 fi
 git -C "$mono" checkout -q -b feat/x
 [ "$(cd "$mono" && "$wf" init --full | jq -r .baseBranch)" = main ] && ok "init: baseBranch is main, not the current feature branch" || die "init: baseBranch fell back to the feature branch"
+[ "$(cd "$mono" && "$wf" init --full | jq -r .milestone.label)" = milestone ] && ok "init: milestone label is the schema default" || die "init: milestone label"
+
+# Zero dependencies: nothing to install, nothing pending. Worktree installs never write a lockfile.
+z="$(newrepo zero)"
+mkdir -p "$z/bare" "$z/locked" "$z/loose"
+echo '{"name":"bare","scripts":{"test":"node --test","lint":"node lint.js"}}' >"$z/bare/package.json"
+echo '{"name":"locked","scripts":{"test":"vitest run"},"devDependencies":{"vitest":"^3.0.0"}}' >"$z/locked/package.json"
+echo '{"lockfileVersion":3,"packages":{}}' >"$z/locked/package-lock.json"
+echo '{"name":"loose","scripts":{"test":"jest"},"devDependencies":{"jest":"^30.0.0"}}' >"$z/loose/package.json"
+git -C "$z" add -A
+zc="$(cd "$z" && "$wf" init --full)" || die "wf init --full (zero deps)"
+jq -e '[.gates[] | select(.cwd == "bare" and .pending == true)] | length == 0' <<<"$zc" >/dev/null && ! (cd "$z" && "$wf" init) | grep -q 'bare: node (npm) \[' &&
+    ok "init: a zero-dependency package gets no pending gate" || die "init zero deps: $zc"
+jq -e '.worktree.setup | index("cd locked && npm ci") and index("cd loose && npm install --no-package-lock") and (map(select(test("bare"))) | length == 0)' <<<"$zc" >/dev/null &&
+    ok "init: worktree setup is npm ci with a lockfile, --no-package-lock without, nothing for zero deps" || die "init setup: $(jq -c .worktree.setup <<<"$zc")"
 
 # ---------------------------------------------------------------- plan answers
 p="$(newrepo answers)"

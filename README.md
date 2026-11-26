@@ -95,12 +95,13 @@ absence once cost a shipped defect or a lost afternoon. A few of them:
                re-reviewed; card -> ux-review when only design fixes remain
  release       wf gates --release: every gate, uncached; a subset is not green
  outcome       wf outcome writes the record; the manager fills the prose
- owner hold    high risk without owner approval parks in owner-review, in every mode
- wf finish     land per finish.mode and tear down the worktree, DB and ports:
+ owner hold    high risk lands only when the owner approved its branch tip (wf approve <ID>)
+ wf finish     refuses a dirty worktree and red release gates for the branch tip, then
+               lands per finish.mode and tears down the worktree, DB and ports:
                  pr: push, open or update the PR, card parks in owner-review until
                      the PR merges; run wf finish <ID> again after the merge to move
                      it to verifying and delete the branch
-                 merge: merge into baseBranch under the lock, card -> verifying
+                 merge: squash into baseBranch under the lock, card -> verifying
                wf doctor shows no leftovers
  done          wf move <ID> done --verified "how it was observed"
 ```
@@ -182,7 +183,7 @@ Skills (type them in Claude Code):
 
 | Area | Commands |
 |---|---|
-| Cards | `wf new`, `wf list`, `wf next`, `wf claim [--headless]`, `wf show`, `wf move ID STATUS [--verified "how"] [--approve]` (`done --verified` commits the card), `wf note`, `wf park ID "owner: ..."`, `wf prio`, `wf status`, `wf board` |
+| Cards | `wf new`, `wf list`, `wf next`, `wf claim [--headless]`, `wf show`, `wf move ID STATUS [--verified "how"]` (`done --verified` commits the card), `wf approve ID` (owner only), `wf note`, `wf park ID "owner: ..."`, `wf prio`, `wf status`, `wf board` |
 | Task lifecycle | `wf start ID`, `wf plan-save ID FILE`, `wf brief ID --stream N`, `wf risk [BASE] [--explain]`, `wf outcome ID [--tick 1,2]`, `wf finish ID`, `wf cards-commit -m "msg"` (on `baseBranch` only), `wf handoff` |
 | Gates | `wf gates [--release] [--json] [--last] [--fix] [--only a,b]` (an unknown name is an error), `wf gate-log [GATE]`, `wf test-affected [BASE]` |
 | Health | `wf doctor [--strict]`, `wf orphans [--kill ID or DIR] [--all]`, `wf prune [--apply [ID]]`, `wf fix-sweep [--since DATE]` |
@@ -212,7 +213,7 @@ Every command has `--help`; `wf help` lists them all.
 | `worktree.link`, `copy`, `cache`, `setup`, `env`, `pool` | detected, pool 0 | make each worktree runnable: dirs to hardlink, files to copy, copy-on-write build caches, setup commands, per-worktree env (`{id}`, `{slug}`, `{port}`), warm pool size |
 | `worktree.teardown` | [] | commands run when a worktree is removed, same placeholders, e.g. `dropdb --if-exists app_{slug}` |
 | `preview.cmd` | | serves one worktree for `wf preview up ID` (`{port}`, `{id}`, `{slug}`) |
-| `finish.mode`, `squash`, `autoMerge`, `cleanup` | `pr`, true, false, true | how `wf finish` lands a task (`pr`, `merge` or `none`) |
+| `finish.mode`, `squash`, `autoMerge`, `cleanup` | `pr`, true, false, true | how `wf finish` lands a task (`pr`, `merge` or `none`); `squash` applies to both: an auto-merged PR is squash-merged, and merge mode lands one commit `<title> (<ID>)` |
 | `tracker.kind`, `requireLink`, `onMerge` | none, false, "" | mirror cards to GitHub issues; `onMerge` runs on landing |
 | `planner.skipFor` | `["S"]` | card sizes that skip the planner |
 | `review.minPasses`, `maxRounds`, `extraAgents`, `ownerHoldHigh` | 1, 3, {}, true | reviewer rounds for standard and high risk, round cap, extra agents per risk, owner hold on high |
@@ -238,17 +239,26 @@ Every command has `--help`; `wf help` lists them all.
 - **Auto permission mode overnight.** The runner passes `--permission-mode
   auto`, not `--dangerously-skip-permissions`, and skips cards tagged
   `migration`, `deploy` or `hardware` (`overnight.exclude`).
-- **High risk waits for you.** In every finish mode, a high-risk card without
-  owner approval parks in `owner-review` (`review.ownerHoldHigh`, default
-  true). You approve with `wf move <ID> todo --approve` (it records
-  `owner-approved:` on the card), then `wf finish <ID>` lands it.
+- **High risk waits for you.** In every finish mode, a high-risk card parks
+  in `owner-review` (`review.ownerHoldHigh`, default true) unless you approved
+  its current branch tip. You approve with `wf approve <ID>`: it records
+  `owner-approved: <sha> <date>`, clears `blocked` and puts the card back where
+  it was; then `wf finish <ID>` lands it. A commit after your approval holds it
+  again. Headless sessions (`WF_HEADLESS=1`, set by the runner) cannot approve.
+- **Red never lands.** `wf finish` needs `wf gates --release` green for the
+  branch tip (it runs the gates in the task worktree when the last result is
+  for another commit). Only a gate skipped as "not in release" is fine;
+  pending, skipped for another reason, timed out or failed is not green.
+  `--force` lands anyway and writes a note on the card saying so.
 - **Read-only agents have no Edit or Write tools.** That covers planner,
   reviewer, scout, researcher, verifier and ux-critic. They keep Bash, so the
   rule that they never check out, stash or reset in any checkout (they read
   revisions with `git show` and `git diff`) lives in their prompts.
-- **Nothing left behind, nothing lost.** `wf finish` tears down the worktree,
-  test database and ports, and aborts instead of discarding uncommitted
-  work. `wf doctor` reports leftovers (a `dev.url` that does not answer is a
+- **Nothing left behind, nothing lost.** `wf finish` refuses while the task
+  worktree has uncommitted or untracked files (it lists them; `--force`
+  commits them as a wip commit first), tears down the worktree, test database
+  and ports, and deletes the branch only while its tip is the commit that
+  landed. `wf doctor` reports leftovers (a `dev.url` that does not answer is a
   warning unless `--strict`). `wf prune --apply [ID]` removes only
   `.workflow/worktrees` and its own ledger entries; pass an ID for an
   abandoned card. `wf orphans --kill ID` (or a worktree DIR) stops the

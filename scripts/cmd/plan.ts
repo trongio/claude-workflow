@@ -36,6 +36,11 @@ type Stack = {
 };
 
 const argv = process.argv.slice(2);
+// Help wins wherever it appears: nothing else runs.
+if (argv.includes('-h') || argv.includes('--help')) {
+    console.log(headerHelp(import.meta.path));
+    process.exit(0);
+}
 const [sub = 'status', ...rest] = argv;
 const flags: Record<string, string | true> = {};
 const args: string[] = [];
