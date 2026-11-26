@@ -65,6 +65,21 @@ cards-commit)
         git -C "$main" commit -q -m "${1:-chore(tasks): update cards}" -- tasks && echo "committed cards: ${1:-chore(tasks): update cards}"
     fi
     ;;
--h | --help | help) sed -n '2,17p' "$src" | sed 's/^# \{0,1\}//' ;;
-*) runtime "$cmd" "$@" ;;
+-h | --help | help)
+    sed -n '2,17p' "$src" | sed 's/^# \{0,1\}//'
+    for f in "$scripts"/cmd/*; do
+        [ -e "$f" ] || continue
+        printf '  wf %-14s %s\n' "$(basename "${f%.*}")" "$(sed -n 's/^\(#\|\/\/\) wf-help: //p' "$f" | head -1)"
+    done
+    ;;
+*)
+    # Drop-in subcommands: scripts/cmd/<name>.sh or .ts. Each starts with a
+    # "# wf-help: ..." (or "// wf-help: ...") line that `wf help` lists.
+    if [ -x "$scripts/cmd/$cmd.sh" ]; then exec "$scripts/cmd/$cmd.sh" "$@"; fi
+    if [ -f "$scripts/cmd/$cmd.ts" ]; then
+        command -v bun >/dev/null || { echo "wf: bun is required (https://bun.sh)" >&2; exit 2; }
+        exec bun "$scripts/cmd/$cmd.ts" "$@"
+    fi
+    runtime "$cmd" "$@"
+    ;;
 esac
