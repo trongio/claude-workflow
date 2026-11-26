@@ -54,12 +54,31 @@ g rev-parse --verify --quiet "$branch^{commit}" >/dev/null || {
 wf_lock merge
 trap 'wf_unlock merge' EXIT
 
+# The target branch checked out in another worktree cannot be checked out here.
+other="$(g worktree list --porcelain | awk -v b="refs/heads/$into" -v m="$main" '
+    /^worktree / { p = substr($0, 10) } $0 == "branch " b && p != m { print p; exit }')"
+if [ -n "$other" ]; then
+    echo "wt-merge: $into is checked out in another worktree ($other); merge there, or use another --into" >&2
+    exit 2
+fi
+
+# Only card edits may be pending in the main checkout; commit them first.
+dirty="$(g status --porcelain --untracked-files=no | grep -v '^.. tasks/' || true)"
+if [ -n "$dirty" ]; then
+    echo "wt-merge: $main has uncommitted changes outside tasks/; commit or stash them first:" >&2
+    printf '%s\n' "$dirty" | head -n 5 >&2
+    exit 2
+fi
+if [ -n "$(g status --porcelain -- tasks)" ]; then
+    g add -A tasks
+    g commit -q -m "chore(tasks): update cards" -- tasks && echo "committed pending card changes"
+fi
+
 if [ "$(g branch --show-current)" != "$into" ]; then
-    if [ -n "$(g status --porcelain --untracked-files=no)" ]; then
-        echo "wt-merge: $main has uncommitted changes and is not on $into" >&2
+    if ! out="$(g checkout --quiet "$into" 2>&1)"; then
+        echo "wt-merge: could not check out $into in $main: $out" >&2
         exit 2
     fi
-    g checkout --quiet "$into"
 fi
 
 commits="$(g rev-list --count "$into..$branch")"

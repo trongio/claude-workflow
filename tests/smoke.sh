@@ -40,10 +40,10 @@ for f in "$repo"/.claude-plugin/*.json "$repo"/workflow.example.json "$repo"/sch
 done
 ok "json files parse"
 if command -v shellcheck >/dev/null; then
-    check "shellcheck" shellcheck -x "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh
+    check "shellcheck" shellcheck -x "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/cmd/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh
 fi
 if command -v shfmt >/dev/null; then
-    [ -z "$(shfmt -i 4 -l "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh)" ] && ok "shfmt" || die "shfmt"
+    [ -z "$(shfmt -i 4 -l "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/cmd/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh)" ] && ok "shfmt" || die "shfmt"
 fi
 if grep -rqI $'\xe2\x80\x94' --exclude-dir=.git "$repo" 2>/dev/null; then die "em dash found"; else ok "no em dash"; fi
 
@@ -146,7 +146,18 @@ PATH="$stub:$PATH" POLL=1 "$wf" run >"$dir-runner.log" 2>&1
 [ ! -d .workflow/worktrees/WF-2 ] && ok "runner removes merged worktrees" || die "runner worktree cleanup"
 rm -rf "$stub" "$dir-runner.log"
 
+for c in doctor gate-log orphans prune test-affected preview; do
+    "$wf" help | grep -q "wf $c " || die "wf help lists $c"
+    "$wf" "$c" --help >/dev/null || die "wf $c --help"
+done
+ok "infra commands listed and answer --help"
+
 printf '\n%d checks passed (scratch: %s)\n' "$pass" "$dir"
+
+# Gate, worktree, ledger and runner behavior: tests/infra.sh (WF_SMOKE_INFRA=0 skips).
+if [ "${WF_SMOKE_INFRA:-1}" = 1 ]; then
+    "$repo/tests/infra.sh" "$dir-infra" | tail -n 1
+fi
 
 if command -v hyperfine >/dev/null && [ "${WF_SMOKE_BENCH:-1}" = 1 ]; then
     { git add -A && git commit -qm "chore: bench"; } >/dev/null 2>&1 || true
