@@ -94,7 +94,7 @@ const json = (p: string): Record<string, unknown> => {
         return {};
     }
 };
-const haveCmd = (c: string) => Bun.spawnSync(['bash', '-c', `command -v ${c}`], { stdout: 'ignore', stderr: 'ignore' }).success;
+export const haveCmd = (c: string) => Bun.spawnSync(['bash', '-c', `command -v ${c}`], { stdout: 'ignore', stderr: 'ignore' }).success;
 
 const rec = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, string>) : {});
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');

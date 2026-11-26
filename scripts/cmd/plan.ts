@@ -13,7 +13,7 @@
 //   wf plan unpend                      clear `pending` on gates whose tools are now installed
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { baseBranch, detect, type Detection } from './detect.ts';
+import { baseBranch, detect, haveCmd, type Detection } from './detect.ts';
 import { table, versions } from './versions.ts';
 import { idPrefix, readCards, root as mainRoot, today } from '../lib.ts';
 
@@ -162,7 +162,6 @@ function loadStack(id: string): Stack {
     return JSON.parse(readFileSync(p, 'utf8')) as Stack;
 }
 const UIS = () => readdirSync(T('ui')).filter((f) => f.endsWith('.md')).map((f) => f.slice(0, -3));
-const haveCmd = (c: string) => Bun.spawnSync(['bash', '-c', `command -v ${c}`], { stdout: 'ignore', stderr: 'ignore' }).success;
 const missing = (g: { requires?: string[]; cwd?: unknown }) =>
     (g.requires ?? []).some((r) => (r.includes('/') ? !existsSync(join(root, typeof g.cwd === 'string' ? g.cwd : '', r)) : !haveCmd(r)));
 
@@ -216,7 +215,7 @@ function vars(b: Brief, stack: Stack, uiId: string, fl: Record<string, boolean>,
     };
 }
 
-function gatesFor(stack: Stack, uiId: string): StackGate[] {
+function stackGates(stack: Stack, uiId: string): StackGate[] {
     return stack.gates
         .filter((g) => !(uiId === 'native' && g.name === 'tokens'))
         .map((g) => {
@@ -267,7 +266,7 @@ async function scaffold(): Promise<void> {
         unverified = rows.filter((r) => r.error).length;
         versionTable = table(rows);
     }
-    const gates = gatesFor(stack, uiId);
+    const gates = stackGates(stack, uiId);
     const v = vars(b, stack, uiId, fl, versionTable, gates);
     const outputs: [string, string][] = [
         ['docs/STACK.md', render(readFileSync(T('plan/STACK.md.tmpl'), 'utf8'), v, fl)],
