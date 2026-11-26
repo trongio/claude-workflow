@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Merge an agent branch into the main checkout with a compact report.
 #
-# Usage: wf merge BRANCH [--into BASE] [--squash] [-m "merge: <what> into main"]
+# Usage: wf merge BRANCH [--into BASE] [--squash] [--sha SHA] [-m "merge: <what> into main"]
 #
 # Runs in the main checkout (found via git's common dir, so it works from a
 # worktree too), under a repo-wide lock so parallel tasks never merge at the
@@ -10,19 +10,26 @@
 # with --no-ff and a conventional message; --squash makes one commit instead,
 # "<card title> (<ID>)" for a wf/<ID> branch unless -m names it.
 #
+# --sha SHA merges exactly that commit and refuses (exit 2) when the branch
+# tip is not SHA (it moved after the gates ran). In a headless session
+# (WF_HEADLESS=1) direct use is refused: only wf finish (WF_FROM_FINISH=1)
+# lands work there.
+#
 # Prints `merged <branch> (<n> commits, <files> files)`. On a conflict the
 # merge is aborted (the main checkout is left exactly as it was, nothing
 # staged) and the conflicting files are listed with their first hunks: merge
 # the base into the branch in its worktree, resolve there, and run it again.
-# Exit 3 on conflict, 1 when the merge or its commit fails otherwise, 2 on
-# usage or a dirty tree.
+# A branch already contained in BASE prints `nothing to merge: ... already in`
+# (exit 0). A branch whose merge would change nothing in BASE exits 5
+# `nothing to merge`, the main checkout untouched. Exit 3 on conflict, 1 when
+# the merge or its commit fails otherwise, 2 on usage, a refusal or a dirty tree.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$here/lib/common.sh"
 
-branch="" into="" msg="" squash=0
+branch="" into="" msg="" squash=0 sha=""
 while [ $# -gt 0 ]; do
     case "$1" in
     --into)
@@ -31,6 +38,11 @@ while [ $# -gt 0 ]; do
         ;;
     --into=*) into="${1#--into=}" ;;
     --squash) squash=1 ;;
+    --sha)
+        sha="${2:?--sha needs a commit}"
+        shift
+        ;;
+    --sha=*) sha="${1#--sha=}" ;;
     -m)
         msg="${2:?-m needs a message}"
         shift
@@ -48,17 +60,31 @@ while [ $# -gt 0 ]; do
     shift
 done
 [ -n "$branch" ] || {
-    echo "usage: wf merge BRANCH [--into BASE] [--squash] [-m MSG]" >&2
+    echo "usage: wf merge BRANCH [--into BASE] [--squash] [--sha SHA] [-m MSG]" >&2
     exit 2
 }
+if [ "${WF_HEADLESS:-}" = 1 ] && [ "${WF_FROM_FINISH:-}" != 1 ]; then
+    echo "wt-merge: refused in a headless session (WF_HEADLESS=1): land work with wf finish" >&2
+    exit 2
+fi
 into="${into:-$(wf_base_branch)}"
 main="$(wf_main)"
 g() { git -C "$main" "$@"; }
 
-g rev-parse --verify --quiet "$branch^{commit}" >/dev/null || {
+tip="$(g rev-parse --verify --quiet "$branch^{commit}")" || {
     echo "wt-merge: no such branch: $branch" >&2
     exit 2
 }
+if [ -n "$sha" ]; then
+    want="$(g rev-parse --verify --quiet "$sha^{commit}")" || {
+        echo "wt-merge: --sha $sha is not a commit" >&2
+        exit 2
+    }
+    if [ "$want" != "$tip" ]; then
+        echo "wt-merge: $branch is at ${tip:0:12}, not the gated $sha; gate the new tip first" >&2
+        exit 2
+    fi
+fi
 
 wf_lock merge
 trap 'wf_unlock merge' EXIT
@@ -92,12 +118,25 @@ if [ -n "$(g status --porcelain -- tasks)" ]; then
     echo "committed pending card changes"
 fi
 
-commits="$(g rev-list --count "$into..$branch")"
+commits="$(g rev-list --count "$into..$tip")"
 if [ "$commits" = 0 ]; then
     echo "nothing to merge: $branch is already in $into"
     exit 0
 fi
-files="$(g diff --name-only "$into...$branch" | wc -l | tr -d ' ')"
+# Would the merge change nothing? merge-tree (git 2.38+) answers without
+# touching the checkout; older git falls back to the branch's own diff.
+empty=0
+if mt="$(g merge-tree --write-tree "$into" "$tip" 2>/dev/null)"; then
+    [ "${mt%%$'\n'*}" = "$(g rev-parse "$into^{tree}")" ] && empty=1
+elif g diff --quiet "$into...$tip" 2>/dev/null; then
+    empty=1
+fi
+if [ "$empty" = 1 ]; then
+    echo "nothing to merge: $branch has no changes against $into; $main untouched"
+    exit 5
+fi
+files="$(g diff --name-only "$into...$tip" | wc -l | tr -d ' ')"
+plural() { if [ "$1" = 1 ]; then echo "1 $2"; else echo "$1 $2s"; fi; }
 if [ -z "$msg" ] && [ "$squash" = 1 ]; then
     case "$branch" in wf/*)
         id="${branch#wf/}"
@@ -109,13 +148,13 @@ fi
 msg="${msg:-merge: $branch into $into}"
 
 if [ "$squash" = 1 ]; then
-    merge=(merge --squash --quiet "$branch")
+    merge=(merge --squash --quiet "$tip")
 else
-    merge=(merge --no-ff --quiet -m "$msg" "$branch")
+    merge=(merge --no-ff --quiet -m "$msg" "$tip")
 fi
 if out="$(g "${merge[@]}" 2>&1)"; then
     if [ "$squash" = 0 ] || out="$(g commit -q -m "$msg" 2>&1)"; then
-        echo "merged $branch ($commits commits, $files files$([ "$squash" = 0 ] || echo ", squashed"))"
+        echo "merged $branch ($(plural "$commits" commit), $(plural "$files" file)$([ "$squash" = 0 ] || echo ", squashed"))"
         exit 0
     fi
     g reset -q --merge 2>/dev/null || g reset -q --hard HEAD
