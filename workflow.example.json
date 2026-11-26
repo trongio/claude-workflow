@@ -4,7 +4,7 @@
   "baseBranch": "main",
   "wipLimit": 2,
   "timezone": "Europe/Berlin",
-  "push": false,
+  "push": true,
   "milestone": { "label": "v1 launch" },
   "board": { "title": "App board", "host": "127.0.0.1", "port": 8095 },
   "gates": [
@@ -55,7 +55,7 @@
   "dev": {
     "url": "http://127.0.0.1:5173",
     "login": "Seeded user demo@example.test, credentials in .env.example (SEED_USER, SEED_SECRET); or register a throwaway account.",
-    "viewports": [1440, 768, 390],
+    "viewports": [375, 1440],
     "check": "",
     "screenshots": ".workflow/shots"
   },

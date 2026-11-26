@@ -30,7 +30,7 @@
     "push": {
       "type": "boolean",
       "default": false,
-      "description": "Whether finishing a task pushes. Default false: pushing is an explicit project choice."
+      "description": "Whether wf finish may push. Default false: pushing is an explicit project choice. finish.mode pr requires true; merge and none never push."
     },
     "milestone": {
       "type": "object",
@@ -224,10 +224,10 @@
             "type": "integer"
           },
           "default": [
-            1440,
-            390
+            375,
+            1440
           ],
-          "description": "Widths to verify and screenshot."
+          "description": "Widths to verify and screenshot (wf check, wf shots, the verifier)."
         },
         "check": {
           "type": "string",
@@ -280,7 +280,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Paths that make a diff high risk (two reviews, owner review)."
+          "description": "Path globs that make a diff high risk (two reviewers at once, owner hold). Unset: wf risk uses built-in patterns (migrations, auth, billing/payment, security, infra/deploy, CI workflows, Dockerfile, *.sql); wf risk --explain shows the match."
         }
       }
     },
@@ -347,7 +347,7 @@
             "none"
           ],
           "default": "pr",
-          "description": "pr: push the task branch and open a PR (never touches the main checkout). merge: merge into baseBranch under the lock (only when the main checkout is not served or shared). none: leave the branch."
+          "description": "pr: push the task branch, open or update the PR, tear down the worktree (branch kept) and park the card in owner-review until the PR merges; run wf finish ID again after the merge to move it to verifying and delete the branch. Needs push: true (wf finish refuses otherwise) plus gh and a remote; never touches the main checkout. merge: merge into baseBranch under the lock, only when the main checkout is not served or shared. none: leave the branch. merge and none never push."
         },
         "squash": {
           "type": "boolean",
@@ -408,7 +408,7 @@
         "minPasses": {
           "type": "integer",
           "default": 1,
-          "description": "Minimum review rounds at every risk level; fix commits are always re-reviewed as their own diff."
+          "description": "Minimum reviewer rounds for standard and high risk (light risk gets the gates plus a manager spot check, no reviewer agent); fix commits are always re-reviewed as their own diff."
         },
         "maxRounds": {
           "type": "integer",
@@ -428,7 +428,7 @@
         "ownerHoldHigh": {
           "type": "boolean",
           "default": true,
-          "description": "High-risk tasks stop in owner-review before landing."
+          "description": "In every finish mode, a high-risk card without owner approval parks in owner-review instead of landing."
         }
       }
     },
