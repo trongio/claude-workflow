@@ -9,6 +9,7 @@
 // Env WF_VERSIONS_FIXTURE=file.json answers every URL from that file ({url: body}); no network.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { headerHelp } from '../lib.ts';
 
 export type Version = { id: string; version: string; released: string; note: string; source: string; verified: string; error?: string };
 
@@ -100,7 +101,8 @@ export function parse(id: string, body: unknown): Pick<Version, 'version' | 'rel
     throw new Error(`unknown ecosystem in ${id}`);
 }
 
-async function fetchBody(url: string, cache: Cache, refresh: boolean): Promise<unknown> {
+// `keep` trims a large body before it is cached (an npm packument is tens of MB).
+async function fetchBody(url: string, cache: Cache, refresh: boolean, keep: (b: unknown) => unknown = (b) => b): Promise<unknown> {
     const fx = process.env.WF_VERSIONS_FIXTURE;
     if (fx) {
         const all = JSON.parse(readFileSync(fx, 'utf8')) as Record<string, unknown>;
@@ -109,11 +111,22 @@ async function fetchBody(url: string, cache: Cache, refresh: boolean): Promise<u
     }
     const hit = cache[url];
     if (!refresh && hit && Date.now() - Date.parse(hit.fetched) < TTL) return hit.body;
-    const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(10000) });
+    const res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(20000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.json();
+    const body = keep(await res.json());
     cache[url] = { fetched: new Date().toISOString(), body };
     return body;
+}
+
+// npm's /latest manifest has no date: the release date is the full packument's `time` field.
+export const npmTimeUrl = (name: string) => `https://registry.npmjs.org/${name.replace('/', '%2F')}`;
+async function npmReleased(name: string, version: string, cache: Cache, refresh: boolean): Promise<string> {
+    try {
+        const body = (await fetchBody(npmTimeUrl(name), cache, refresh, (b) => ({ time: (b as { time?: unknown }).time ?? {} }))) as { time?: Record<string, string> };
+        return day(body.time?.[version]);
+    } catch {
+        return ''; // the version stands without a date
+    }
 }
 
 export async function versions(ids: string[], refresh = false): Promise<Version[]> {
@@ -124,6 +137,7 @@ export async function versions(ids: string[], refresh = false): Promise<Version[
             try {
                 source = urlFor(id);
                 const v = parse(id, await fetchBody(source, cache, refresh));
+                if (id.startsWith('npm:') && !v.released) v.released = await npmReleased(id.slice(4), v.version, cache, refresh);
                 // A 0.x core dependency is a maturity question the decision record must answer.
                 if (/^0\./.test(v.version)) v.note = [v.note, 'pre-1.0'].filter(Boolean).join(', ');
                 return { id, ...v, source, verified: today() };
@@ -165,7 +179,7 @@ const mm = (v: string) => v.split(/[.+-]/).slice(0, 2).join('.');
 if (import.meta.main) {
     const argv = process.argv.slice(2);
     if (argv.includes('--help') || argv.includes('-h') || argv.length === 0) {
-        console.log(readFileSync(import.meta.path, 'utf8').split('\n').slice(2, 10).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+        console.log(headerHelp(import.meta.path));
         process.exit(argv.length === 0 ? 1 : 0);
     }
     const refresh = argv.includes('--refresh');
