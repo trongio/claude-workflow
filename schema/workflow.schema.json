@@ -523,6 +523,16 @@
           "description": "Card sizes that skip the planner (the manager writes the brief)."
         }
       }
+    },
+    "preview": {
+      "type": "object",
+      "description": "wf preview up|down ID: a per-worktree dev server.",
+      "properties": {
+        "cmd": {
+          "type": "string",
+          "description": "Command that serves the worktree; {port} {id} {slug} expand. Runs in the worktree with .workflow/env loaded."
+        }
+      }
     }
   }
 }
