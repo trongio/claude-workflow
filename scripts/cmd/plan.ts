@@ -13,9 +13,9 @@
 //   wf plan unpend                      clear `pending` on gates whose tools are now installed
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { baseBranch, detect, haveCmd, type Detection } from './detect.ts';
+import { baseBranch, detect, haveCmd, missingTools, type Detection } from './detect.ts';
 import { table, versions } from './versions.ts';
-import { idPrefix, readCards, root as mainRoot, today } from '../lib.ts';
+import { headerHelp, idPrefix, prefixFrom, readCards, root as mainRoot, today } from '../lib.ts';
 
 const PLUGIN = join(dirname(import.meta.path), '../..');
 const T = (p: string) => join(PLUGIN, 'templates', p);
@@ -94,6 +94,14 @@ function normalize(key: string, raw: string): unknown {
         return [...new Set(flat)];
     }
     return one(v);
+}
+
+// Values of a fixed-option question that match none of its options (free-text and list questions take anything).
+function invalid(key: string, v: unknown): string[] {
+    const q = qfile().questions.find((x) => x.key === key);
+    if (!q || q.type === 'list' || !q.options.length) return [];
+    const ok = (x: unknown) => q.options.some((o) => JSON.stringify(o.value) === JSON.stringify(x));
+    return (Array.isArray(v) && q.multiSelect ? v : [v]).filter((x) => !ok(x)).map((x) => (typeof x === 'string' ? x : JSON.stringify(x)));
 }
 
 // Facts wf detect can answer without asking.
@@ -175,6 +183,7 @@ function vars(b: Brief, stack: Stack, uiId: string, versionTable: string, gates:
     const gateTable = ['| Gate | Command | Runs | Notes |', '| --- | --- | --- | --- |', ...gates.map((g) => `| \`${g.name}\` | \`${g.cmd.replace(/\|/g, '\\|')}\` | ${g.release === false ? 'inner loop only' : g.inner === false ? 'release only' : 'inner loop and release'} | ${[g.heavy ? 'heavy' : '', g.pending ? 'pending: tool not installed' : '', g.fix ? 'has fix' : ''].filter(Boolean).join(', ') || '-'} |`)].join('\n');
     return {
         PROJECT: String(a['product.name'] || root.split('/').pop()),
+        PROJECT_NAME: typeof a['product.name'] === 'string' ? a['product.name'].trim() : '',
         DATE: today(),
         PRODUCT_SUMMARY: String(a['product.summary'] || '(one sentence: what it is and who it is for)'),
         PRODUCT_KIND: label('product.kind', a['product.kind']),
@@ -223,7 +232,14 @@ function stackGates(stack: Stack, uiId: string): StackGate[] {
             // Plain CSS has no utility scale, so raw px values in component CSS are magic numbers too.
             if (g.name === 'tokens' && uiId === 'plain-css') cmd = cmd.replace(/style=\\x22'/, "style=\\x22|(?<![\\w.-])[1-9][0-9]*(?:\\.[0-9]+)?px\\b'");
             const { requires, ...rest } = g;
-            return { ...rest, cmd, ...(missing(g) ? { pending: true } : {}) } as StackGate;
+            // A `<tool>.config.*` glob only means something when the gate runs that tool or the stack
+            // ships it (vitest reads vite.config.*; next build does not, and Next ships no vite).
+            const when = g.when.filter((w) => {
+                const tool = w.match(/^(?:.*\/)?([a-z][\w-]*)\.config\.\*$/)?.[1];
+                const name = (p: string) => p.split(':').pop()?.split('/').pop() ?? '';
+                return !tool || g.cmd.includes(tool) || stack.packages.some((p) => name(p) === tool || name(p).startsWith(`${tool}-`));
+            });
+            return { ...rest, cmd, when, ...(missing(g) ? { pending: true } : {}) } as StackGate;
         });
 }
 
@@ -231,7 +247,8 @@ function workflowConfig(stack: Stack, uiId: string, fl: Record<string, boolean>,
     const standards = ['docs/ENGINEERING-STANDARDS.md', ...(fl.ui ? ['docs/UI-UX-STANDARDS.md'] : [])];
     return {
         $schema: 'https://raw.githubusercontent.com/trongio/claude-workflow/main/schema/workflow.schema.json',
-        idPrefix: idPrefix(),
+        // The product's name when the brief has one, else the configured prefix or the repo name.
+        idPrefix: v.PROJECT_NAME ? prefixFrom(v.PROJECT_NAME) : idPrefix(),
         baseBranch: baseBranch(root),
         wipLimit: 2,
         milestone: { label: 'v1' },
@@ -239,7 +256,7 @@ function workflowConfig(stack: Stack, uiId: string, fl: Record<string, boolean>,
         ...(stack.testAffected ? { testAffected: stack.testAffected } : {}),
         worktree: stack.worktree,
         ui: fl.ui,
-        dev: fl.ui ? { url: stack.dev.url, login: '', viewports: [375, 768, 1440] } : { url: stack.dev.url },
+        dev: fl.ui ? { url: stack.dev.url, login: '', viewports: [375, 1440] } : { url: stack.dev.url },
         docs: { spec: ['docs/STACK.md'], design: fl.ui ? ['docs/UI-UX-STANDARDS.md'] : [], standards },
         risk: { high: stack.risk.high },
         ux: { locales: v.LOCALES.split(', '), widestLocale: v.WIDEST_LOCALE, maxFixRounds: 2 },
@@ -297,6 +314,13 @@ async function scaffold(): Promise<void> {
         }
         created.push(f);
     }
+    // Worktrees, plans and gate results live in .workflow/: never committed (as wf init does).
+    const ignore = join(root, '.gitignore');
+    const ignored = existsSync(ignore) ? readFileSync(ignore, 'utf8') : '';
+    if (!/^\/?\.workflow\/?$/m.test(ignored)) {
+        if (!flags['dry-run']) writeFileSync(ignore, `${ignored}${ignored && !ignored.endsWith('\n') ? '\n' : ''}.workflow/\n`);
+        created.push('.gitignore: .workflow/');
+    }
     if (!flags['dry-run']) {
         b.answers['decision.stack'] = stack.id;
         b.answers['decision.ui'] = uiId;
@@ -341,7 +365,9 @@ async function cards(): Promise<void> {
             console.log(`kept    ${have.id}  ${c.title}`);
             continue;
         }
-        const deps = (c.depends ?? []).map((d) => ids[d] ?? (/^[A-Za-z]+-\d+$/.test(d) ? d : '')).filter(Boolean);
+        const unknown = (c.depends ?? []).filter((d) => !ids[d] && !/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(d));
+        if (unknown.length) console.error(`warning: "${c.title}" depends on unknown key(s) ${unknown.join(', ')}: no earlier card has that key; dependency dropped`);
+        const deps = (c.depends ?? []).map((d) => ids[d] ?? (/^[A-Za-z][A-Za-z0-9]*-\d+$/.test(d) ? d : '')).filter(Boolean);
         const cmd = ['bun', wf, 'new', c.title, '--size', c.size ?? 'M', '--area', c.area ?? '', '--priority', String(c.priority ?? 2), ...(deps.length ? ['--depends', deps.join(',')] : []), ...(c.milestone ? ['--milestone'] : [])];
         if (flags['dry-run']) {
             console.log(`would   ${c.title}${deps.length ? ` (after ${deps.join(',')})` : ''}`);
@@ -393,14 +419,16 @@ function unpend(): void {
     const still: string[] = [];
     for (const g of cfg.gates ?? []) {
         if (!g.pending) continue;
+        // A scaffolded gate keeps its stack's `requires`; any other gate (wf init) needs its command's tools.
         const src = stack?.gates.find((s) => s.name === g.name);
-        if (src && !missing({ ...src, cwd: g.cwd })) {
+        const lacking = src?.requires ? (missing({ ...src, cwd: g.cwd }) ? src.requires : []) : missingTools(g.cmd, join(root, typeof g.cwd === 'string' ? g.cwd : ''));
+        if (!lacking.length) {
             delete g.pending;
             cleared.push(g.name);
-        } else still.push(g.name);
+        } else still.push(`${g.name} (needs ${lacking.join(', ')})`);
     }
     writeFileSync(p, `${JSON.stringify(cfg, null, 2)}\n`);
-    console.log(`cleared: ${cleared.join(' ') || 'none'}${still.length ? `; still pending: ${still.join(' ')}` : ''}`);
+    console.log(`cleared: ${cleared.join(' ') || 'none'}${still.length ? `; still pending: ${still.join(', ')}` : ''}`);
 }
 
 switch (sub) {
@@ -408,7 +436,14 @@ switch (sub) {
         const [key, value] = args;
         if (!key || value === undefined) fail('usage: wf plan set KEY VALUE [--assumed]');
         const b = loadBrief();
-        b.answers[key] = normalize(key, value);
+        const v = normalize(key, value);
+        const bad = invalid(key, v);
+        if (bad.length) {
+            const q = qfile().questions.find((x) => x.key === key);
+            console.error(`plan: ${key}: not an option: ${bad.join(', ')}\nvalid: ${q?.options.map((o) => JSON.stringify(o.label)).join(', ')}${q?.multiSelect ? ' (several: comma-separated or a JSON list)' : ''}`);
+            process.exit(2);
+        }
+        b.answers[key] = v;
         b.source[key] = flags.assumed ? 'assumed' : 'owner';
         saveBrief(b);
         console.log(`${key} = ${JSON.stringify(b.answers[key])}${flags.assumed ? ' (assumed)' : ''}`);
@@ -477,7 +512,7 @@ switch (sub) {
     case '-h':
     case '--help':
     case 'help':
-        console.log(readFileSync(import.meta.path, 'utf8').split('\n').slice(2, 14).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+        console.log(headerHelp(import.meta.path));
         break;
     default:
         fail(`unknown subcommand ${sub} (wf plan --help)`);

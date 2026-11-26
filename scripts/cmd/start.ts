@@ -35,6 +35,7 @@ const { card, prev } = withLock(() => {
 const branch = card.branch;
 const claimed = !ACTIVE.includes(prev);
 let dir = worktreeOf(branch);
+const fresh = !dir;
 const undo = (msg: string): never => {
     if (claimed) withLock(() => update(findCard(readCards(), card.id), { status: prev }));
     fail(`${msg}\n${card.id} moved back to ${prev}`);
@@ -52,10 +53,11 @@ const initLine = (init.success ? init.stdout : init.stderr).toString().trim().sp
 
 const goal = (section(card.body, 'Goal') ?? '').split('\n').find((l) => l.trim()) ?? '(no goal written)';
 if (flags.json) {
-    console.log(JSON.stringify({ id: card.id, branch, worktree: dir, init: init.success, acceptance: card.acceptance }));
+    console.log(JSON.stringify({ id: card.id, branch, worktree: dir, created: fresh, init: init.success, acceptance: card.acceptance }));
 } else {
     console.log(`worktree: ${dir}`);
-    console.log(`${card.id} ${claimed ? "in-progress" : `${card.status} (resumed)`} on ${branch}: ${card.title}`);
+    // Resumed means an existing worktree picked up again; a card claimed earlier (wf claim) still starts here.
+    console.log(`${card.id} ${fresh ? 'started' : `${claimed ? 'in-progress' : card.status} (resumed)`} on ${branch}: ${card.title}`);
     console.log(`  size ${card.size}  area ${card.area || '-'}  acceptance ${card.acceptance.done}/${card.acceptance.total}`);
     console.log(`  goal: ${goal}`);
     console.log(`  card: ${root}${card.file}`);

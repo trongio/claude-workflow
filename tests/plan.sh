@@ -50,6 +50,7 @@ fx="$dir/fixture.json"
 cat >"$fx" <<'EOF'
 {
   "https://registry.npmjs.org/react/latest": { "name": "react", "version": "19.1.0" },
+  "https://registry.npmjs.org/react": { "time": { "19.0.0": "2026-01-01T00:00:00Z", "19.1.0": "2026-04-01T12:00:00Z" } },
   "https://registry.npmjs.org/@inertiajs%2Freact/latest": { "name": "@inertiajs/react", "version": "2.0.1" },
   "https://repo.packagist.org/p2/laravel/framework.json": { "packages": { "laravel/framework": [
     { "version": "v13.0.0-beta.2", "time": "2026-11-20T10:00:00+00:00" },
@@ -68,6 +69,12 @@ export WF_VERSIONS_FIXTURE="$fx"
 vdir="$(newrepo versions)"
 out="$(cd "$vdir" && "$wf" versions --json npm:react npm:@inertiajs/react composer:laravel/framework pypi:django crates:axum go:github.com/BurntSushi/toml eol:nodejs)" || die "versions against the fixture"
 v() { jq -r --arg id "$1" '.[] | select(.id == $id) | .version' <<<"$out"; }
+[ "$(jq -r '.[] | select(.id == "npm:react") | .released' <<<"$out")" = 2026-04-01 ] && ok "versions: npm release date from the packument time field" || die "versions: npm released"
+[ "$(jq -r '.[] | select(.id == "npm:@inertiajs/react") | .version' <<<"$out")" = 2.0.1 ] && ok "versions: npm row stands without a date" || die "versions: npm without time"
+for c in versions plan detect; do
+    "$wf" "$c" --help 2>&1 | grep -q '^import\|from .\.\./' && die "wf $c --help prints source lines" || true
+done
+ok "help: versions, plan and detect print only their header comment"
 [ "$(v npm:react)" = 19.1.0 ] && [ "$(v npm:@inertiajs/react)" = 2.0.1 ] && ok "versions: npm (scoped names escaped)" || die "versions: npm"
 [ "$(v composer:laravel/framework)" = 12.9.1 ] && ok "versions: Packagist skips prereleases" || die "versions: packagist got $(v composer:laravel/framework)"
 [ "$(v pypi:django)" = 5.2.3 ] && [ "$(jq -r '.[] | select(.id=="pypi:django") | .released' <<<"$out")" = 2026-09-02 ] && ok "versions: PyPI with release date" || die "versions: pypi"
@@ -102,7 +109,12 @@ dirs="$(jq -r '[.packages[].dir] | sort | join(" ")' <<<"$det")"
 [ "$dirs" = "apps/web libs/php/core services/api" ] && ok "detect: packages at depth <= 3, not deeper ($dirs)" || die "detect dirs: $dirs"
 [ "$(jq -r '.packages[] | select(.dir=="apps/web") | .frameworks.vitest' <<<"$det")" = 3.2.1 ] && ok "detect: version from the lockfile" || die "detect: lockfile version"
 [ "$(jq -r '.greenfield' <<<"$det")" = false ] && ok "detect: not greenfield" || die "detect: greenfield"
-cfg="$(cd "$mono" && "$wf" init | sed 1d)" || die "wf init (print)"
+summary="$(cd "$mono" && "$wf" init)" || die "wf init (summary)"
+[ "$(wc -l <<<"$summary")" -le 20 ] && grep -q '^gate .*cwd .*when .*flags' <<<"$summary" && grep -q 'pending (needs ' <<<"$summary" && ok "init: compact summary with a gate table naming what pending gates need" || die "init summary: $summary"
+dt="$(cd "$mono" && "$wf" detect)"
+grep -q ' go not installed' <<<"$dt" && die "detect: old 'not installed' wording: $dt" || true
+if command -v go >/dev/null; then grep -q '^package services/api: go: ' <<<"$dt"; else grep -q '^package services/api: go (toolchain missing: go)' <<<"$dt"; fi && ok "detect: toolchain wording only when missing" || die "detect text: $dt"
+cfg="$(cd "$mono" && "$wf" init --full)" || die "wf init --full"
 jq -e '[.gates[] | has("when")] | all' <<<"$cfg" >/dev/null && ok "init: every gate has when" || die "init: a gate without when"
 jq -e '.gates[] | select(.cwd=="apps/web" and .name=="test-web" and .release==false and (.cmd | test("--changed")))' <<<"$cfg" >/dev/null && ok "init: nested node package gets cwd and an affected-only inner test gate" || die "init: nested node gates"
 jq -e '.gates[] | select(.name=="test-full-web" and .inner==false and .heavy==true)' <<<"$cfg" >/dev/null && ok "init: full suite is release-only and heavy" || die "init: full suite gate"
@@ -113,7 +125,7 @@ if ! command -v shellcheck >/dev/null; then
     jq -e '.gates[] | select(.name=="shellcheck" and .pending==true)' <<<"$cfg" >/dev/null && ok "init: shellcheck pending when not installed" || die "init: shellcheck pending"
 fi
 git -C "$mono" checkout -q -b feat/x
-[ "$(cd "$mono" && "$wf" init | sed 1d | jq -r .baseBranch)" = main ] && ok "init: baseBranch is main, not the current feature branch" || die "init: baseBranch fell back to the feature branch"
+[ "$(cd "$mono" && "$wf" init --full | jq -r .baseBranch)" = main ] && ok "init: baseBranch is main, not the current feature branch" || die "init: baseBranch fell back to the feature branch"
 
 # ---------------------------------------------------------------- plan answers
 p="$(newrepo answers)"
@@ -123,7 +135,16 @@ p="$(newrepo answers)"
     "$wf" plan set data.sensitivity "Personal data (PII),Many customer orgs" >/dev/null
     "$wf" plan set locales "en, ka, ru" >/dev/null
     "$wf" plan set product.kind "B2B SaaS" >/dev/null
+    "$wf" plan set product.name "Acme Rooms" >/dev/null
 )
+set +e
+bad="$(cd "$p" && "$wf" plan set scale "Gigantic" 2>&1)"
+rc=$?
+set -e
+[ "$rc" = 2 ] && grep -q 'not an option: Gigantic' <<<"$bad" && grep -q '"Under 1k users"' <<<"$bad" && ! jq -e '.answers.scale' "$p/.workflow/plan/brief.json" >/dev/null &&
+    ok "plan set: an invalid label exits 2 with the valid options" || die "plan set invalid: rc=$rc $bad"
+(cd "$p" && "$wf" plan set surfaces "Web (phone first),Smoke signals" >/dev/null 2>&1) && die "plan set: an invalid multi-select item was accepted" || ok "plan set: invalid multi-select item refused"
+
 [ "$(jq -c '.answers.surfaces' "$p/.workflow/plan/brief.json")" = '["web-phone","native"]' ] && ok "plan set: JSON list of labels -> values" || die "plan set list"
 [ "$(jq -c '.answers["data.sensitivity"]' "$p/.workflow/plan/brief.json")" = '["pii","multi-tenant"]' ] && ok "plan set: comma-separated labels -> values" || die "plan set csv"
 [ "$(jq -c '.answers.locales' "$p/.workflow/plan/brief.json")" = '["en","ka","ru"]' ] && ok "plan set: Other text for a list question" || die "plan set locales"
@@ -159,12 +180,25 @@ for f in "$repo"/templates/stacks/*.json; do
     if grep -n $'\xe2\x80\x94' "$s/docs/"*.md "$s/CLAUDE.md"; then die "scaffold $id: em dash in output"; fi
 done
 ok "scaffold: all $n stacks render with no placeholders, gates all have when, inner + release split"
+grep -qx '.workflow/' "$dir/stack-go-api/.gitignore" && ok "scaffold: .workflow/ in .gitignore" || die "scaffold: .gitignore"
+[ "$(jq -r .idPrefix "$dir/stack-django-htmx/.claude/workflow.json")" = AR ] && ok "scaffold: idPrefix from the product name" || die "scaffold idPrefix: $(jq -r .idPrefix "$dir/stack-django-htmx/.claude/workflow.json")"
+jq -e '.gates[] | select(.name == "build") | .when | index("vite.config.*") == null' "$dir/stack-next-ts/.claude/workflow.json" >/dev/null &&
+    jq -e '[.gates[].when[]] | index("vite.config.*") != null' "$dir/stack-laravel-inertia-react/.claude/workflow.json" >/dev/null &&
+    ok "scaffold: no vite.config.* on Next's build gate, kept where vite ships" || die "scaffold: framework config globs"
 
 # unpend clears pending only for gates whose tools now exist.
 u="$dir/stack-laravel-inertia-react"
 mkdir -p "$u/vendor/bin" && touch "$u/vendor/bin/pest"
 (cd "$u" && "$wf" plan unpend >/dev/null) || die "plan unpend"
 jq -e '(.gates[] | select(.name=="pest") | has("pending") | not) and (.gates[] | select(.name=="phpstan") | .pending == true)' "$u/.claude/workflow.json" >/dev/null && ok "plan unpend: clears installed tools only" || die "plan unpend result"
+
+# unpend in a wf init repo (no stack.id): a gate clears once its command's tools are on PATH.
+i="$(newrepo unpend-init)"
+mkdir -p "$i/.claude"
+echo '{"gates":[{"name":"a","cmd":"git status","when":["*"],"pending":true},{"name":"b","cmd":"no-such-tool-xyz run","when":["*"],"pending":true}]}' >"$i/.claude/workflow.json"
+out="$(cd "$i" && "$wf" plan unpend)" || die "plan unpend (init repo)"
+jq -e '(.gates[0] | has("pending") | not) and .gates[1].pending == true' "$i/.claude/workflow.json" >/dev/null && grep -q 'b (needs no-such-tool-xyz)' <<<"$out" &&
+    ok "plan unpend: init-repo gates clear by their command's tools" || die "plan unpend init: $out"
 
 # Never overwrites without --force.
 s="$dir/stack-go-api"
@@ -198,6 +232,8 @@ EOF
 rooms="$(find "$c/tasks" -maxdepth 1 -name '*rooms*.md')"
 auth_id="$(grep -l 'title: "Auth' "$c"/tasks/*.md | xargs sed -n 's/^id: //p')"
 grep -q "^depends: \[$auth_id\]" "$rooms" && grep -q '^- \[ \] An archived room cannot be booked' "$rooms" && ok "plan cards: depends keys resolve to ids, acceptance written" || die "plan cards body/depends"
+echo '{"cards":[{"key":"x","title":"Orphan dep","depends":["nope"]}]}' >"$c/bad-cards.json"
+(cd "$c" && "$wf" plan cards bad-cards.json --dry-run 2>&1 >/dev/null) | grep -q 'unknown key(s) nope' && ok "plan cards: an unknown dependency key warns" || die "plan cards: unknown key not warned"
 (cd "$c" && "$wf" plan cards cards.json | grep -c '^kept' | grep -qx 6) && [ "$(find "$c/tasks" -maxdepth 1 -name '*.md' | wc -l)" -eq 6 ] && ok "plan cards: idempotent" || die "plan cards: not idempotent"
 (cd "$c" && "$wf" detect --save >/dev/null && "$wf" plan status | grep -q "^next: research") && ok "plan status: names the next phase" || die "plan status"
 

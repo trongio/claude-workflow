@@ -6,12 +6,13 @@ import {
     readCards, readJson, root, section, taskBranch, tickAcceptance, update, withLock, worktreeOf,
 } from '../lib.ts';
 
-const HELP = `Usage: wf outcome ID [--tick 1,2] [--refresh]
+const HELP = `Usage: wf outcome ID [--tick 1,2]
 
-Appends "## Outcome" to the card with the facts filled in between wf:auto markers:
-risk, diffstat and commits of the task branch against the base branch, and the gate
-table from .workflow/gates-last.json. Write the prose above the markers.
---tick ticks acceptance items by number. --refresh regenerates the facts and keeps the prose.`;
+Writes the facts of "## Outcome" between wf:auto markers: risk, diffstat and
+commits of the task branch against the base branch, and the gate table from
+.workflow/gates-last.json. Every run regenerates that block and keeps the prose
+around it; write the prose above the markers. --tick ticks acceptance items by
+number. (--refresh is accepted for compatibility; refreshing is the default.)`;
 
 const { flags, args } = parseArgs(process.argv.slice(2), { tick: 'string', refresh: 'bool' }, HELP);
 const id = args[0] ?? fail(HELP, 2);
@@ -46,14 +47,13 @@ withLock(() => {
     update(card, {}, (text) => {
         if (ticks.length) ({ text, missing } = tickAcceptance(text, ticks));
         if (!has) return `${text.replace(/\s*$/, '')}\n\n## Outcome\n\n${PROSE_HINT}\n\n${auto}\n`;
-        if (!flags.refresh) return text;
         const a = text.indexOf(AUTO_START);
         const b = text.indexOf(AUTO_END);
         if (a < 0 || b < a) return text.replace(/^## Outcome[ \t]*\n/m, () => `## Outcome\n\n${auto}\n`);
         return text.slice(0, a) + auto + text.slice(b + AUTO_END.length);
     });
-    if (missing.length) console.error(`warning: no acceptance item(s) ${missing.join(', ')}`);
     const after = findCard(readCards(), card.id);
-    const verb = !has ? 'written' : flags.refresh ? 'refreshed' : 'kept';
-    console.log(`${card.id} outcome ${verb}; acceptance ${after.acceptance.done}/${after.acceptance.total}  ${root}${after.file}`);
+    console.log(`${card.id} outcome ${has ? 'refreshed' : 'written'}; acceptance ${after.acceptance.done}/${after.acceptance.total}  ${root}${after.file}`);
+    if (ticks.length && !card.acceptance.total) fail('no acceptance criteria on the card: add - [ ] items or pass --force');
+    if (missing.length) console.error(`warning: no acceptance item(s) ${missing.join(', ')} (the card has ${after.acceptance.total})`);
 });

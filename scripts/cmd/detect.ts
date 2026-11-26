@@ -3,9 +3,11 @@
 // Usage: wf detect [--json] [--save] [--dir DIR]
 //   --json   print the full detection as JSON (consumed by wf init and wf plan)
 //   --save   also write it to .workflow/plan/detect.json
-// Imported by scripts/init.ts for gate generation (detect, gatesFor, baseBranch).
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { headerHelp } from '../lib.ts';
+
+// Also imported by scripts/init.ts and wf plan for gate generation (detect, gatesFor, baseBranch, missingTools).
 
 export type Kind = 'node' | 'php' | 'python' | 'go' | 'rust';
 export type Pkg = {
@@ -95,6 +97,30 @@ const json = (p: string): Record<string, unknown> => {
     }
 };
 export const haveCmd = (c: string) => Bun.spawnSync(['bash', '-c', `command -v ${c}`], { stdout: 'ignore', stderr: 'ignore' }).success;
+
+// What a gate command needs that is not there: each command word of the
+// pipeline (and what xargs runs) must be on PATH or, for ./paths, exist under
+// cwd; package-manager runners also need the installed dependencies.
+export function missingTools(cmd: string, cwd: string, has: (c: string) => boolean = haveCmd): string[] {
+    const out = new Set<string>();
+    for (const seg of cmd.split(/&&|\|\||[|;]/)) {
+        const words = (seg.trim().match(/"[^"]*"|'[^']*'|\S+/g) ?? []).filter((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
+        let i = 0;
+        // `test -z "$(gofmt -l .)"` and the like: the tool is inside the substitution.
+        const sub = seg.match(/\$\(\s*([^\s)]+)/)?.[1];
+        if (sub) words.splice(0, words.length, sub, ...words.slice(1));
+        if (words[0] === 'xargs') for (i = 1; i < words.length && words[i].startsWith('-'); i++);
+        const w = words[i];
+        if (!w || w === 'wf' || /^["'$(]/.test(w)) continue;
+        if (w.includes('/')) {
+            if (!existsSync(join(cwd, w))) out.add(w);
+            continue;
+        }
+        if (!has(w)) out.add(w);
+        else if (['npm', 'npx', 'pnpm', 'yarn', 'bun', 'bunx'].includes(w) && !existsSync(join(cwd, 'node_modules'))) out.add('node_modules');
+    }
+    return [...out];
+}
 
 const rec = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, string>) : {});
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
@@ -250,6 +276,14 @@ export function baseBranch(root: string): string {
     return ['main', 'master', 'trunk', 'develop'].find((b) => git('show-ref', '--verify', '--quiet', `refs/heads/${b}`).success) ?? 'main';
 }
 
+// Why a package counts as not installed: a missing toolchain (go, rust) or missing dependencies.
+export function notInstalled(p: Pkg): string {
+    if (p.kind === 'go') return 'toolchain missing: go';
+    if (p.kind === 'rust') return 'toolchain missing: cargo';
+    const install = { node: `${p.pm ?? 'npm'} install`, php: 'composer install', python: 'uv sync' }[p.kind];
+    return `dependencies not installed: ${install}`;
+}
+
 export type GateResult = { gates: Gate[]; testAffected?: { cmd: string; map: { src: string; tests: string }[] }; link: string[]; setup: string[] };
 
 // Gates for every detected package. Nested packages get cwd and path-prefixed `when`
@@ -352,7 +386,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
 if (import.meta.main) {
     const argv = process.argv.slice(2);
     if (argv.includes('--help') || argv.includes('-h')) {
-        console.log(readFileSync(import.meta.path, 'utf8').split('\n').slice(2, 6).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+        console.log(headerHelp(import.meta.path));
         process.exit(0);
     }
     const di = argv.indexOf('--dir');
@@ -372,7 +406,7 @@ if (import.meta.main) {
     }
     const fw = (p: Pkg) => Object.entries(p.frameworks).map(([k, v]) => `${k}@${v}`).join(' ');
     console.log(`greenfield: ${det.greenfield ? 'yes' : 'no'}`);
-    for (const p of det.packages) console.log(`package ${p.dir || '.'} ${p.kind}${p.pm ? ` (${p.pm})` : ''}${p.installed ? '' : ' not installed'}: ${fw(p) || '-'}`);
+    for (const p of det.packages) console.log(`package ${p.dir || '.'}: ${p.kind}${p.pm ? ` (${p.pm})` : ''}${p.installed ? '' : ` (${notInstalled(p)})`}${fw(p) ? `: ${fw(p)}` : ''}`);
     const line = (k: string, v: string[]) => v.length && console.log(`${k}: ${v.slice(0, 12).join(' ')}${v.length > 12 ? ` (+${v.length - 12})` : ''}`);
     line('ci', det.ci);
     line('make', det.make);

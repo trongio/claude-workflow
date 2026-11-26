@@ -1,6 +1,6 @@
 // Unit tests for the card library: bun test tests/
 import { afterAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
 // The board root sits under a parent directory named tasks/, which an archive
@@ -193,5 +193,58 @@ describe('lock', () => {
         writeFileSync(`${dir}/pid`, '999999999');
         expect(lib.withLock(() => 'ran', 'cards', 2)).toBe('ran');
         expect(existsSync(dir)).toBe(false);
+    });
+});
+
+describe('risk defaults', () => {
+    test('without risk.high in the config the built-in patterns make high risk', () => {
+        expect(lib.highGlobs().source).toBe('built-in');
+        for (const f of ['db/migrations/0001.sql', 'migrations/x.py', 'src/auth/login.ts', 'app/billing/plan.php', 'infra/main.tf', 'deploy/k8s.yaml', '.github/workflows/ci.yml', 'Dockerfile', 'prisma/schema.prisma'])
+            expect(lib.classifyRisk([f]).level).toBe('high');
+        expect(lib.classifyRisk(['src/author.ts']).level).toBe('standard');
+    });
+    test('an explicit list replaces the built-in one', () => {
+        expect(lib.classifyRisk(['infra/main.tf'], ['db/']).level).toBe('standard');
+    });
+});
+
+describe('claimable milestone tier', () => {
+    test('a milestone card in a busy area still beats a non-milestone card in an idle one', () => {
+        const cards = [card({ id: 'T-1', area: 'api', status: 'in-progress' }), card({ id: 'T-2', area: 'api', milestone: true, priority: 3 }), card({ id: 'T-3', area: 'ui' })];
+        expect(lib.claimable(cards, 1).map((t) => t.id)).toEqual(['T-2']);
+    });
+    test('excluded tags are skipped', () => {
+        const cards = [card({ id: 'T-1', tags: ['deploy'] }), card({ id: 'T-2', tags: [] })];
+        expect(lib.claimable(cards, 2, true, ['deploy']).map((t) => t.id)).toEqual(['T-2']);
+    });
+});
+
+describe('lock takeover', () => {
+    test('a waiter that renamed a fresh lock (another inode) puts it back', () => {
+        const dir = `${projectRoot}tasks/.race.lock`;
+        mkdirSync(dir);
+        writeFileSync(`${dir}/pid`, String(process.pid));
+        expect(lib.takeOver(dir, 1)).toBe(false);
+        expect(readFileSync(`${dir}/pid`, 'utf8')).toBe(String(process.pid));
+        rmSync(dir, { recursive: true });
+    });
+    test('the stale dir judged by inode is removed', () => {
+        const dir = `${projectRoot}tasks/.race.lock`;
+        mkdirSync(dir);
+        expect(lib.takeOver(dir, statSync(dir).ino)).toBe(true);
+        expect(existsSync(dir)).toBe(false);
+    });
+});
+
+describe('help and prefixes', () => {
+    test('headerHelp stops at the first line of code', () => {
+        const f = `${tmp}/cmd.ts`;
+        writeFileSync(f, "#!/usr/bin/env bun\n// wf-help: one line\n// Usage: x\n//   --flag  does y\nimport { a } from 'b';\n// later\n");
+        expect(lib.headerHelp(f)).toBe('Usage: x\n  --flag  does y');
+    });
+    test('prefixFrom takes initials or the first letters', () => {
+        expect(lib.prefixFrom('Acme Billing')).toBe('AB');
+        expect(lib.prefixFrom('claude-workflow')).toBe('CW');
+        expect(lib.prefixFrom('aegis')).toBe('AEG');
     });
 });
