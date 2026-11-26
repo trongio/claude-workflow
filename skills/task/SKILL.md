@@ -148,9 +148,10 @@ boxes that a test or an observed verification proved.
 
 High risk and `review.ownerHoldHigh` (default true), or a card that says the
 owner signs off: `wf park <ID> "owner: <what to decide>"` and stop. The owner
-moves it on. `wf finish` enforces the same hold in every finish mode: a
-high-risk card without owner approval parks in `owner-review` instead of
-landing.
+approves with `wf move <ID> todo --approve` (records `owner-approved:`).
+`wf finish` enforces the same hold in every finish mode: a high-risk card
+without `owner-approved:` parks in `owner-review` instead of landing. Never
+set `--approve` yourself; only the owner does.
 
 ## 11. Finish and clean up
 
