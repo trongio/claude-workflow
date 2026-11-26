@@ -126,7 +126,8 @@ else
     set +e
     human="$("$wf" check /bad.html /wrong.html)"
     set -e
-    awk 'length > 120 { exit 1 }' <<<"$human" && ok "summary lines <= 120 chars" || die "long summary" "$human"
+    # The trailing details path is as long as TMPDIR makes it: only the summary text is measured.
+    awk '{ sub(/ details [^ ]+$/, " details") } length > 120 { exit 1 }' <<<"$human" && ok "summary lines <= 120 chars" || die "long summary" "$human"
     [ "$(grep -c 'wrong.html' <<<"$human")" = 1 ] && grep -q 'wrong-locale' <<<"$human" &&
         ok "wrong <html lang> aborts that url" || die "wrong-locale" "$human"
     "$wf" check /wrong.html --locale en >/dev/null && ok "--locale overrides the widest locale" || die "--locale en"
