@@ -1,0 +1,211 @@
+{
+  "id": "django-htmx",
+  "title": "Django + htmx + Postgres (uv)",
+  "summary": "Server-rendered Django with htmx for interactivity: admin, auth, ORM, migrations, i18n and forms built in; almost no client build.",
+  "fits": [
+    "data-heavy internal tools and B2B back offices",
+    "teams that read Python",
+    "fast delivery with the Django admin as a free back office"
+  ],
+  "avoid": [
+    "rich client-side interactivity (drag and drop editors, offline)",
+    "a native mobile app is the main surface"
+  ],
+  "languages": [
+    "python"
+  ],
+  "ui": true,
+  "uiDefault": "plain-css",
+  "uiOptions": [
+    "plain-css"
+  ],
+  "packages": [
+    "eol:python",
+    "eol:django",
+    "pypi:django",
+    "pypi:django-htmx",
+    "pypi:psycopg",
+    "pypi:pytest",
+    "pypi:pytest-django",
+    "pypi:pytest-xdist",
+    "pypi:django-stubs",
+    "pypi:mypy",
+    "pypi:ruff",
+    "pypi:factory-boy",
+    "pypi:django-test-migrations",
+    "eol:postgresql",
+    "npm:htmx.org"
+  ],
+  "commands": {
+    "install": "uv sync",
+    "dev": "uv run python manage.py runserver",
+    "test": "uv run pytest -n auto",
+    "fmt": "uv run ruff format . && uv run ruff check --fix ."
+  },
+  "dev": {
+    "url": "http://127.0.0.1:8000"
+  },
+  "layout": [
+    "config/             settings (split base/dev/prod), urls, asgi/wsgi",
+    "apps/<name>/        models, services.py (state changes), selectors.py (reads), views, templates",
+    "templates/components/  catalogued template partials + /dev/gallery view",
+    "locale/             gettext catalogs per locale",
+    "tests/              pytest-django, factories, query-count guards"
+  ],
+  "gates": [
+    {
+      "name": "pytest",
+      "cmd": "wf test-affected \"$WF_BASE\"",
+      "when": [
+        "*.py",
+        "pyproject.toml",
+        "uv.lock",
+        "tests/",
+        "templates/"
+      ],
+      "heavy": true,
+      "release": false,
+      "requires": [
+        ".venv/bin/pytest"
+      ]
+    },
+    {
+      "name": "pytest-full",
+      "cmd": "uv run pytest -q -n auto",
+      "when": [
+        "*.py",
+        "pyproject.toml",
+        "uv.lock",
+        "tests/",
+        "templates/"
+      ],
+      "heavy": true,
+      "requires": [
+        ".venv/bin/pytest"
+      ]
+    },
+    {
+      "name": "ruff",
+      "cmd": "uv run ruff check . && uv run ruff format --check .",
+      "when": [
+        "*.py",
+        "pyproject.toml",
+        "uv.lock"
+      ],
+      "fix": "uv run ruff check --fix . && uv run ruff format .",
+      "requires": [
+        ".venv/bin/ruff"
+      ]
+    },
+    {
+      "name": "mypy",
+      "cmd": "uv run mypy .",
+      "when": [
+        "*.py",
+        "pyproject.toml",
+        "uv.lock"
+      ],
+      "heavy": true,
+      "requires": [
+        ".venv/bin/mypy"
+      ]
+    },
+    {
+      "name": "migrations",
+      "cmd": "uv run python manage.py makemigrations --check --dry-run",
+      "when": [
+        "*/models.py",
+        "*/models/",
+        "*/migrations/"
+      ],
+      "release": true,
+      "requires": [
+        ".venv/bin/python"
+      ]
+    },
+    {
+      "name": "django-check",
+      "cmd": "uv run python manage.py check --fail-level WARNING",
+      "when": [
+        "*.py",
+        "pyproject.toml",
+        "uv.lock",
+        "templates/"
+      ],
+      "requires": [
+        ".venv/bin/python"
+      ]
+    },
+    {
+      "name": "tokens",
+      "cmd": "! rg -n --pcre2 --glob '!**/tokens.css' '[\"\\x27`:(\\[]\\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\\b|\\[-?[0-9.]+(?:px|rem)\\]|style=\\{\\{|style=\\x22' templates static/css",
+      "when": [
+        "templates/",
+        "static/css/"
+      ],
+      "requires": [
+        "rg"
+      ]
+    },
+    {
+      "name": "secrets",
+      "cmd": "gitleaks detect --no-banner --redact --exit-code 1",
+      "when": [
+        "*"
+      ],
+      "release": true,
+      "cache": false,
+      "requires": [
+        "gitleaks"
+      ]
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "git ls-files -z '*.sh' | xargs -0 -r shellcheck",
+      "when": [
+        "*.sh"
+      ],
+      "requires": [
+        "shellcheck"
+      ]
+    }
+  ],
+  "testAffected": {
+    "cmd": "uv run pytest -q {files}",
+    "map": [
+      {
+        "src": "apps/*.py",
+        "tests": "tests/*test_{name}.py"
+      }
+    ]
+  },
+  "worktree": {
+    "link": [],
+    "copy": [
+      ".env"
+    ],
+    "setup": [
+      "uv sync --frozen"
+    ],
+    "cache": [
+      ".mypy_cache",
+      ".ruff_cache"
+    ],
+    "env": {
+      "DATABASE_URL": "postgres://app:app@127.0.0.1:5432/app_{slug}",
+      "PORT": "{port}"
+    }
+  },
+  "risk": {
+    "high": [
+      "*/migrations/",
+      "config/settings/",
+      "apps/accounts/",
+      "apps/billing/",
+      "*/permissions.py",
+      "infra/",
+      ".github/"
+    ]
+  },
+  "standards": "django-htmx.standards.md"
+}

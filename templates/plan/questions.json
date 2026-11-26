@@ -1,0 +1,464 @@
+{
+  "version": 1,
+  "about": "Interview for /workflow:plan-project. `wf plan questions` returns the next <= 4 unanswered questions (in this order) as AskUserQuestion payloads; answers are stored with `wf plan set KEY VALUE`. `detect` names a wf detect fact that answers the question without asking. `default` is what --defaults or a headless run records as an assumption. Free-text keys (product.summary, product.jobs) come from the idea argument or one plain chat question, never from AskUserQuestion.",
+  "text": [
+    {
+      "key": "product.name",
+      "prompt": "Product name (repo name if unsure).",
+      "default": ""
+    },
+    {
+      "key": "product.summary",
+      "prompt": "One sentence: what it is and who it is for.",
+      "default": ""
+    },
+    {
+      "key": "product.jobs",
+      "type": "list",
+      "prompt": "The three core jobs a user comes to do, as verbs (\"book a room\", \"approve an invoice\").",
+      "default": []
+    }
+  ],
+  "questions": [
+    {
+      "key": "product.kind",
+      "round": 1,
+      "header": "Product",
+      "question": "What kind of product is it?",
+      "multiSelect": false,
+      "default": "b2b-saas",
+      "options": [
+        {
+          "label": "B2B SaaS",
+          "value": "b2b-saas",
+          "description": "Organisations sign up; admins and staff use it every day."
+        },
+        {
+          "label": "Consumer app",
+          "value": "consumer",
+          "description": "Individuals sign up themselves; first-run and mobile matter most."
+        },
+        {
+          "label": "Internal tool",
+          "value": "internal",
+          "description": "One organisation, known users, speed of building beats polish."
+        },
+        {
+          "label": "API or platform",
+          "value": "api",
+          "description": "Developers integrate with it; the contract is the product."
+        }
+      ]
+    },
+    {
+      "key": "surfaces",
+      "round": 1,
+      "header": "Surfaces",
+      "question": "Where will people use it? Pick every surface v1 must ship.",
+      "multiSelect": true,
+      "default": [
+        "web-desktop"
+      ],
+      "options": [
+        {
+          "label": "Web, desktop first",
+          "value": "web-desktop",
+          "description": "Dense screens, keyboard, tables; still usable on a phone."
+        },
+        {
+          "label": "Web, phone first",
+          "value": "web-phone",
+          "description": "Most sessions on a phone browser; installable PWA possible."
+        },
+        {
+          "label": "Native mobile app",
+          "value": "native",
+          "description": "App store presence, device APIs, push."
+        },
+        {
+          "label": "API, CLI or hardware",
+          "value": "headless",
+          "description": "A public API, a CLI, devices or a kiosk with no regular web UI."
+        }
+      ]
+    },
+    {
+      "key": "data.sensitivity",
+      "round": 1,
+      "header": "Data",
+      "question": "What does it store? Pick every one that applies.",
+      "multiSelect": true,
+      "default": [
+        "pii"
+      ],
+      "options": [
+        {
+          "label": "Personal data (PII)",
+          "value": "pii",
+          "description": "Names, emails, phone numbers, IDs, anything GDPR covers."
+        },
+        {
+          "label": "Money or payments",
+          "value": "money",
+          "description": "Prices, invoices, subscriptions, balances, payouts."
+        },
+        {
+          "label": "Many customer orgs",
+          "value": "multi-tenant",
+          "description": "Multi-tenant: one org must never see another's data."
+        },
+        {
+          "label": "None of these",
+          "value": "none",
+          "description": "Public or non-sensitive data only."
+        }
+      ]
+    },
+    {
+      "key": "scale",
+      "round": 1,
+      "header": "Scale",
+      "question": "Expected size one year after launch?",
+      "multiSelect": false,
+      "default": "small",
+      "options": [
+        {
+          "label": "Under 1k users",
+          "value": "tiny",
+          "description": "One small server is plenty."
+        },
+        {
+          "label": "1k to 50k users",
+          "value": "small",
+          "description": "One server plus a managed database."
+        },
+        {
+          "label": "50k to 1M users",
+          "value": "medium",
+          "description": "Horizontal app servers, queues, caching."
+        },
+        {
+          "label": "Over 1M users",
+          "value": "large",
+          "description": "Performance and cost per request drive the stack."
+        }
+      ]
+    },
+    {
+      "key": "team.languages",
+      "round": 2,
+      "header": "Languages",
+      "question": "Which languages does whoever reviews the code (you or the team) read well?",
+      "multiSelect": true,
+      "default": [
+        "typescript"
+      ],
+      "options": [
+        {
+          "label": "TypeScript",
+          "value": "typescript",
+          "description": "Node, Bun, browser frameworks."
+        },
+        {
+          "label": "PHP",
+          "value": "php",
+          "description": "Laravel or Symfony."
+        },
+        {
+          "label": "Python",
+          "value": "python",
+          "description": "Django, FastAPI."
+        },
+        {
+          "label": "Go or Rust",
+          "value": "go-rust",
+          "description": "Compiled services."
+        }
+      ]
+    },
+    {
+      "key": "hosting",
+      "round": 2,
+      "header": "Hosting",
+      "question": "Where should it run?",
+      "multiSelect": false,
+      "default": "vps",
+      "options": [
+        {
+          "label": "One VPS (Docker)",
+          "value": "vps",
+          "description": "Cheapest and fully owned: docker compose or Kamal on a VPS."
+        },
+        {
+          "label": "Managed PaaS",
+          "value": "paas",
+          "description": "Fly, Render, Railway, Laravel Cloud, Heroku-style deploys."
+        },
+        {
+          "label": "Serverless or edge",
+          "value": "serverless",
+          "description": "Vercel, Cloudflare Workers, Lambda."
+        },
+        {
+          "label": "Kubernetes / big cloud",
+          "value": "cloud",
+          "description": "AWS, GCP or Azure with an ops team."
+        }
+      ]
+    },
+    {
+      "key": "budget",
+      "round": 2,
+      "header": "Budget",
+      "question": "Monthly infrastructure budget for the first year?",
+      "multiSelect": false,
+      "default": "low",
+      "options": [
+        {
+          "label": "Under $25",
+          "value": "minimal",
+          "description": "One small box, everything on it."
+        },
+        {
+          "label": "$25 to $150",
+          "value": "low",
+          "description": "App server plus managed database and backups."
+        },
+        {
+          "label": "$150 to $1000",
+          "value": "medium",
+          "description": "Separate workers, staging, monitoring."
+        },
+        {
+          "label": "Over $1000",
+          "value": "high",
+          "description": "Cost is not the constraint."
+        }
+      ]
+    },
+    {
+      "key": "deadline",
+      "round": 2,
+      "header": "Deadline",
+      "question": "When must a first version be in real users' hands?",
+      "multiSelect": false,
+      "default": "quarter",
+      "options": [
+        {
+          "label": "Within 4 weeks",
+          "value": "month",
+          "description": "Batteries-included stack, smallest possible v1."
+        },
+        {
+          "label": "Within 3 months",
+          "value": "quarter",
+          "description": "Room for the core plus quality gates from day one."
+        },
+        {
+          "label": "Within 6 months",
+          "value": "half",
+          "description": "Room for a design system and integrations."
+        },
+        {
+          "label": "No fixed date",
+          "value": "none",
+          "description": "Quality and long-term fit first."
+        }
+      ]
+    },
+    {
+      "key": "capabilities",
+      "round": 3,
+      "header": "Needs",
+      "question": "Which of these does v1 need? Pick every one that applies.",
+      "multiSelect": true,
+      "default": [
+        "jobs"
+      ],
+      "options": [
+        {
+          "label": "Works offline",
+          "value": "offline",
+          "description": "Must keep working without a connection and sync later."
+        },
+        {
+          "label": "Live updates",
+          "value": "realtime",
+          "description": "Screens update by themselves (websockets, SSE)."
+        },
+        {
+          "label": "Background jobs",
+          "value": "jobs",
+          "description": "Queues, schedules, imports, exports, emails."
+        },
+        {
+          "label": "None of these",
+          "value": "none",
+          "description": "Plain request and response."
+        }
+      ]
+    },
+    {
+      "key": "locales",
+      "round": 3,
+      "header": "Languages",
+      "question": "Which interface languages does v1 ship? Use Other to type locale codes, e.g. en, de, ka.",
+      "multiSelect": false,
+      "type": "list",
+      "detect": "locales",
+      "default": [
+        "en"
+      ],
+      "options": [
+        {
+          "label": "English only",
+          "value": [
+            "en"
+          ],
+          "description": "Still i18n keys from day one, so adding a language is data, not a rewrite."
+        },
+        {
+          "label": "English + German",
+          "value": [
+            "en",
+            "de"
+          ],
+          "description": "German is the width test for most European layouts."
+        },
+        {
+          "label": "English + Spanish",
+          "value": [
+            "en",
+            "es"
+          ],
+          "description": "Latin American and Spanish markets."
+        },
+        {
+          "label": "English + French",
+          "value": [
+            "en",
+            "fr"
+          ],
+          "description": "French, Canadian and African francophone markets."
+        }
+      ]
+    },
+    {
+      "key": "integrations",
+      "round": 3,
+      "header": "Integrate",
+      "question": "What must it talk to in v1? Pick every one that applies.",
+      "multiSelect": true,
+      "default": [
+        "email"
+      ],
+      "options": [
+        {
+          "label": "Payments provider",
+          "value": "payments",
+          "description": "Stripe, Paddle, a local bank gateway."
+        },
+        {
+          "label": "Email or SMS",
+          "value": "email",
+          "description": "Transactional mail, notifications."
+        },
+        {
+          "label": "Hardware or devices",
+          "value": "hardware",
+          "description": "Controllers, printers, scanners, IoT: needs an edge agent and simulators."
+        },
+        {
+          "label": "SSO or identity",
+          "value": "sso",
+          "description": "Google/Microsoft login, SAML, OIDC."
+        }
+      ]
+    },
+    {
+      "key": "assets",
+      "round": 3,
+      "header": "Assets",
+      "question": "What already exists that the project must reuse?",
+      "multiSelect": true,
+      "detect": "assets",
+      "default": [
+        "none"
+      ],
+      "options": [
+        {
+          "label": "Brand or design",
+          "value": "brand",
+          "description": "Logo, colours, a Figma file or a design system."
+        },
+        {
+          "label": "Existing code",
+          "value": "code",
+          "description": "A predecessor app or prototype to mine."
+        },
+        {
+          "label": "Data to migrate",
+          "value": "data",
+          "description": "Spreadsheets or a database that must come along."
+        },
+        {
+          "label": "Nothing yet",
+          "value": "none",
+          "description": "Clean start."
+        }
+      ]
+    },
+    {
+      "key": "review",
+      "round": 3,
+      "header": "Review",
+      "question": "How much do you want to review yourself?",
+      "multiSelect": false,
+      "default": "high-risk",
+      "options": [
+        {
+          "label": "Every change",
+          "value": "every",
+          "description": "Each task stops in owner-review before it lands."
+        },
+        {
+          "label": "High-risk only",
+          "value": "high-risk",
+          "description": "Auth, money, tenancy, migrations, infra stop for you; the rest lands on green gates."
+        },
+        {
+          "label": "Outcomes only",
+          "value": "outcomes",
+          "description": "You check milestones and the board; agents land everything that passes."
+        }
+      ]
+    }
+  ],
+  "widthFactor": {
+    "about": "Rough string expansion against English, used to pick ux.widestLocale. Higher is wider.",
+    "en": 1.0,
+    "zh": 0.6,
+    "ja": 0.7,
+    "ko": 0.8,
+    "he": 0.95,
+    "ar": 1.05,
+    "es": 1.2,
+    "it": 1.2,
+    "pt": 1.25,
+    "fr": 1.25,
+    "nl": 1.25,
+    "tr": 1.25,
+    "sv": 1.2,
+    "da": 1.2,
+    "no": 1.2,
+    "cs": 1.25,
+    "pl": 1.3,
+    "uk": 1.3,
+    "ru": 1.3,
+    "el": 1.35,
+    "fi": 1.35,
+    "hu": 1.35,
+    "de": 1.35,
+    "ka": 1.45
+  }
+}

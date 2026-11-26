@@ -1,0 +1,370 @@
+{
+  "id": "laravel-inertia-vue",
+  "title": "Laravel + Inertia + Vue (TypeScript)",
+  "summary": "Laravel monolith with Inertia v-next and Vue 3 + TypeScript: server-side routing, auth, queues, i18n and policies built in; typed client pages without a separate API.",
+  "fits": [
+    "B2B SaaS and internal tools with forms, tables and admin flows",
+    "multi-tenant apps (policies, global scopes, Postgres RLS)",
+    "small teams shipping fast with batteries included",
+    "cheap single-VPS hosting (Octane/FrankenPHP or php-fpm)"
+  ],
+  "avoid": [
+    "a public API is the main product (consider an API stack)",
+    "heavy realtime collaboration (needs a dedicated websocket tier)",
+    "the reviewer cannot read PHP"
+  ],
+  "languages": [
+    "php",
+    "typescript"
+  ],
+  "ui": true,
+  "uiDefault": "shadcn-tailwind",
+  "uiOptions": [
+    "plain-css",
+    "shadcn-tailwind"
+  ],
+  "packages": [
+    "eol:php",
+    "eol:laravel",
+    "composer:laravel/framework",
+    "composer:inertiajs/inertia-laravel",
+    "composer:pestphp/pest",
+    "composer:larastan/larastan",
+    "composer:phpstan/phpstan-strict-rules",
+    "composer:laravel/pint",
+    "composer:spatie/laravel-data",
+    "composer:spatie/laravel-typescript-transformer",
+    "npm:@inertiajs/vue3",
+    "npm:vue",
+    "npm:vue-tsc",
+    "npm:typescript",
+    "npm:vite",
+    "npm:tailwindcss",
+    "npm:vitest",
+    "npm:@playwright/test",
+    "npm:eslint",
+    "npm:typescript-eslint",
+    "npm:prettier",
+    "npm:knip",
+    "npm:jscpd",
+    "eol:nodejs",
+    "eol:postgresql",
+    "eol:valkey"
+  ],
+  "commands": {
+    "install": "composer install && npm ci",
+    "dev": "composer run dev",
+    "test": "./vendor/bin/pest --parallel && npx vitest run",
+    "fmt": "./vendor/bin/pint && npx prettier --write ."
+  },
+  "dev": {
+    "url": "http://127.0.0.1:8000"
+  },
+  "layout": [
+    "app/Actions/        one class per state change (audited, authorized, transactional)",
+    "app/Data/           typed DTOs (spatie/laravel-data); TS types generated from them",
+    "app/Http/Requests/  FormRequests: validation + authorize() for every write",
+    "app/Policies/       one policy per model; every route that changes state names its ability",
+    "resources/js/       Inertia pages, components/ (catalogued), lib/ (Vue SFC)",
+    "lang/               backend message keys per locale (resources/js/locales for the client)",
+    "tests/Feature/      HTTP tests per route incl. authorization and query-count guards"
+  ],
+  "gates": [
+    {
+      "name": "pest",
+      "cmd": "wf test-affected \"$WF_BASE\"",
+      "when": [
+        "*.php",
+        "composer.json",
+        "composer.lock",
+        "phpstan.neon*",
+        "phpunit.xml*",
+        "tests/"
+      ],
+      "heavy": true,
+      "release": false,
+      "requires": [
+        "vendor/bin/pest"
+      ]
+    },
+    {
+      "name": "pest-full",
+      "cmd": "./vendor/bin/pest --parallel",
+      "when": [
+        "*.php",
+        "composer.json",
+        "composer.lock",
+        "phpstan.neon*",
+        "phpunit.xml*",
+        "tests/",
+        "database/"
+      ],
+      "heavy": true,
+      "requires": [
+        "vendor/bin/pest"
+      ]
+    },
+    {
+      "name": "pint",
+      "cmd": "./vendor/bin/pint --test",
+      "when": [
+        "*.php",
+        "pint.json"
+      ],
+      "fix": "./vendor/bin/pint",
+      "requires": [
+        "vendor/bin/pint"
+      ]
+    },
+    {
+      "name": "phpstan",
+      "cmd": "./vendor/bin/phpstan analyse --no-progress --memory-limit=1G",
+      "when": [
+        "*.php",
+        "composer.json",
+        "composer.lock",
+        "phpstan.neon*",
+        "phpunit.xml*"
+      ],
+      "heavy": true,
+      "requires": [
+        "vendor/bin/phpstan"
+      ]
+    },
+    {
+      "name": "vitest",
+      "cmd": "npx vitest run --changed \"$WF_BASE\" --passWithNoTests",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json"
+      ],
+      "heavy": true,
+      "release": false,
+      "requires": [
+        "node_modules/.bin/vitest"
+      ]
+    },
+    {
+      "name": "vitest-full",
+      "cmd": "npx vitest run",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json"
+      ],
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/vitest"
+      ]
+    },
+    {
+      "name": "typecheck",
+      "cmd": "npx vue-tsc --noEmit",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json",
+        "tsconfig*.json"
+      ],
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/vue-tsc"
+      ]
+    },
+    {
+      "name": "eslint",
+      "cmd": "npx eslint resources/js --max-warnings 0 --cache --cache-location node_modules/.cache/eslint/",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json",
+        "eslint.config.*"
+      ],
+      "fix": "npx eslint resources/js --fix",
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/eslint"
+      ]
+    },
+    {
+      "name": "prettier",
+      "cmd": "npx prettier --check --cache .",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json",
+        "*.css",
+        "*.json",
+        "*.md"
+      ],
+      "fix": "npx prettier --write --cache .",
+      "requires": [
+        "node_modules/.bin/prettier"
+      ]
+    },
+    {
+      "name": "knip",
+      "cmd": "npx knip --no-progress",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json"
+      ],
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/knip"
+      ]
+    },
+    {
+      "name": "dupes",
+      "cmd": "npx jscpd --silent --exitCode 1 --threshold 0 --min-tokens 70 resources/js",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json"
+      ],
+      "release": true,
+      "requires": [
+        "node_modules/.bin/jscpd"
+      ]
+    },
+    {
+      "name": "build",
+      "cmd": "npm run build",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json",
+        "*.css",
+        "vite.config.*"
+      ],
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/vite"
+      ]
+    },
+    {
+      "name": "e2e",
+      "cmd": "npx playwright test",
+      "when": [
+        "resources/js/*.ts",
+        "resources/js/*.tsx",
+        "resources/js/*.vue",
+        "*.css",
+        "package.json",
+        "package-lock.json",
+        "tests/e2e/"
+      ],
+      "heavy": true,
+      "release": true,
+      "cache": false,
+      "requires": [
+        "node_modules/.bin/playwright"
+      ]
+    },
+    {
+      "name": "tokens",
+      "cmd": "! rg -n --pcre2 --glob '!**/theme.css' --glob '!**/tokens.css' '[\"\\x27`:(\\[]\\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\\b|\\[-?[0-9.]+(?:px|rem)\\]|style=\\{\\{|style=\\x22' resources/js",
+      "when": [
+        "resources/js/"
+      ],
+      "requires": [
+        "rg"
+      ]
+    },
+    {
+      "name": "secrets",
+      "cmd": "gitleaks detect --no-banner --redact --exit-code 1",
+      "when": [
+        "*"
+      ],
+      "release": true,
+      "cache": false,
+      "requires": [
+        "gitleaks"
+      ]
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "git ls-files -z '*.sh' | xargs -0 -r shellcheck",
+      "when": [
+        "*.sh"
+      ],
+      "requires": [
+        "shellcheck"
+      ]
+    }
+  ],
+  "testAffected": {
+    "cmd": "./vendor/bin/pest {files}",
+    "map": [
+      {
+        "src": "app/*.php",
+        "tests": "tests/*{name}Test.php"
+      },
+      {
+        "src": "routes/*.php",
+        "tests": "tests/Feature/*.php"
+      }
+    ]
+  },
+  "worktree": {
+    "link": [
+      "vendor",
+      "node_modules"
+    ],
+    "copy": [
+      ".env"
+    ],
+    "setup": [],
+    "cache": [
+      ".phpstan-cache",
+      "node_modules/.cache",
+      "node_modules/.vite"
+    ],
+    "env": {
+      "DB_DATABASE": "app_{slug}",
+      "APP_URL": "http://127.0.0.1:{port}"
+    }
+  },
+  "risk": {
+    "high": [
+      "database/migrations/",
+      "app/Policies/",
+      "app/Http/Middleware/",
+      "config/auth.php",
+      "config/database.php",
+      "routes/",
+      "app/Providers/AuthServiceProvider.php",
+      "infra/",
+      "deploy/",
+      ".github/"
+    ]
+  },
+  "standards": "laravel-inertia-vue.standards.md"
+}
