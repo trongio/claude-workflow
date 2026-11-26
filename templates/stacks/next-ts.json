@@ -1,0 +1,287 @@
+{
+  "id": "next-ts",
+  "title": "Next.js (App Router) + TypeScript + Drizzle + Postgres",
+  "summary": "One TypeScript codebase for UI and server: React Server Components, server actions, Drizzle on Postgres, Better Auth.",
+  "fits": [
+    "consumer and B2B web apps where one language end to end matters",
+    "SEO-relevant public pages next to an app",
+    "teams that read TypeScript best",
+    "Vercel or a Node container on a VPS"
+  ],
+  "avoid": [
+    "heavy background work, unless a separate worker process (a queue consumer next to the app) is acceptable",
+    "the team wants batteries (queues, admin, i18n) from one framework",
+    "strict cost control on serverless at scale"
+  ],
+  "languages": [
+    "typescript"
+  ],
+  "ui": true,
+  "uiDefault": "shadcn-tailwind",
+  "uiOptions": [
+    "shadcn-tailwind",
+    "mantine",
+    "plain-css"
+  ],
+  "packages": [
+    "eol:nodejs",
+    "npm:next",
+    "npm:react",
+    "npm:typescript",
+    "npm:drizzle-orm",
+    "npm:drizzle-kit",
+    "npm:better-auth",
+    "npm:zod",
+    "npm:next-intl",
+    "npm:tailwindcss",
+    "npm:vitest",
+    "npm:@playwright/test",
+    "npm:eslint",
+    "npm:typescript-eslint",
+    "npm:prettier",
+    "npm:knip",
+    "npm:jscpd",
+    "eol:postgresql"
+  ],
+  "commands": {
+    "install": "npm ci",
+    "dev": "npm run dev",
+    "test": "npx vitest run",
+    "fmt": "npx prettier --write ."
+  },
+  "dev": {
+    "url": "http://127.0.0.1:3000"
+  },
+  "layout": [
+    "src/app/            routes (App Router); route handlers and server actions call src/server/",
+    "src/server/         use cases: authorize, validate (zod), transact, audit; the only DB callers",
+    "src/db/             drizzle schema + migrations (drizzle-kit)",
+    "src/components/     catalogued components (CATALOG.md) + gallery route",
+    "messages/           next-intl catalogs per locale",
+    "tests/e2e/          Playwright journeys"
+  ],
+  "gates": [
+    {
+      "name": "vitest",
+      "cmd": "npx vitest run --changed \"$WF_BASE\" --passWithNoTests",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json"
+      ],
+      "heavy": true,
+      "release": false,
+      "requires": [
+        "node_modules/.bin/vitest"
+      ]
+    },
+    {
+      "name": "vitest-full",
+      "cmd": "npx vitest run",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json"
+      ],
+      "heavy": true,
+      "inner": false,
+      "requires": [
+        "node_modules/.bin/vitest"
+      ]
+    },
+    {
+      "name": "typecheck",
+      "cmd": "npx tsc --noEmit",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json",
+        "tsconfig*.json"
+      ],
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/tsc"
+      ]
+    },
+    {
+      "name": "eslint",
+      "cmd": "npx eslint . --max-warnings 0 --cache --cache-location node_modules/.cache/eslint/",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json",
+        "eslint.config.*"
+      ],
+      "fix": "npx eslint . --fix",
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/eslint"
+      ]
+    },
+    {
+      "name": "prettier",
+      "cmd": "npx prettier --check --cache .",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json",
+        "*.css",
+        "*.json",
+        "*.md"
+      ],
+      "fix": "npx prettier --write --cache .",
+      "requires": [
+        "node_modules/.bin/prettier"
+      ]
+    },
+    {
+      "name": "knip",
+      "cmd": "npx knip --no-progress",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json"
+      ],
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/knip"
+      ]
+    },
+    {
+      "name": "dupes",
+      "cmd": "npx jscpd --silent --exitCode 1 --threshold 0 --min-tokens 70 src",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json"
+      ],
+      "inner": false,
+      "requires": [
+        "node_modules/.bin/jscpd"
+      ]
+    },
+    {
+      "name": "build",
+      "cmd": "npx next build",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json",
+        "*.css",
+        "next.config.*"
+      ],
+      "heavy": true,
+      "requires": [
+        "node_modules/.bin/next"
+      ]
+    },
+    {
+      "name": "e2e",
+      "cmd": "npx playwright test",
+      "when": [
+        "src/*.ts",
+        "src/*.tsx",
+        "messages/",
+        "package.json",
+        "package-lock.json",
+        "tests/e2e/"
+      ],
+      "heavy": true,
+      "inner": false,
+      "cache": false,
+      "requires": [
+        "node_modules/.bin/playwright"
+      ]
+    },
+    {
+      "name": "migrations",
+      "cmd": "npx drizzle-kit check",
+      "when": [
+        "src/db/",
+        "drizzle.config.*"
+      ],
+      "inner": false,
+      "requires": [
+        "node_modules/.bin/drizzle-kit"
+      ]
+    },
+    {
+      "name": "tokens",
+      "cmd": "dirs=$(ls -d src 2>/dev/null); [ -n \"$dirs\" ] || { echo 'tokens: none of src exists; fix the paths of this gate' >&2; exit 1; }; rg -n --pcre2 --glob '!**/globals.css' --glob '!**/tokens.css' '[\"\\x27`:(\\[]\\s*#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\\b|\\[-?[0-9.]+(?:px|rem)\\]|style=\\{\\{|style=\\x22' $dirs; [ $? = 1 ]",
+      "when": [
+        "src/"
+      ],
+      "requires": [
+        "rg"
+      ]
+    },
+    {
+      "name": "secrets",
+      "cmd": "gitleaks git --no-banner --redact --exit-code 1",
+      "when": [
+        "*"
+      ],
+      "inner": false,
+      "cache": false,
+      "requires": [
+        "gitleaks"
+      ]
+    },
+    {
+      "name": "shellcheck",
+      "cmd": "git ls-files -z '*.sh' | xargs -0 -r shellcheck",
+      "when": [
+        "*.sh"
+      ],
+      "requires": [
+        "shellcheck"
+      ]
+    }
+  ],
+  "worktree": {
+    "link": [
+      "node_modules"
+    ],
+    "copy": [
+      ".env.local",
+      ".env"
+    ],
+    "setup": [],
+    "cache": [
+      ".next/cache",
+      "node_modules/.cache"
+    ],
+    "env": {
+      "DATABASE_URL": "postgres://app:app@127.0.0.1:5432/app_{slug}",
+      "PORT": "{port}"
+    }
+  },
+  "risk": {
+    "high": [
+      "src/db/",
+      "drizzle/",
+      "src/server/auth/",
+      "src/middleware.ts",
+      "src/server/billing/",
+      "infra/",
+      ".github/"
+    ]
+  },
+  "standards": "next-ts.standards.md"
+}

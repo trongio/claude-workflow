@@ -9,6 +9,13 @@
 # Markdown files get their heading tree (wf doc).
 set -euo pipefail
 
+case "${1:-}" in -h | --help)
+    # shellcheck source=lib/common.sh
+    . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+    wf_help "$0"
+    exit 0
+    ;;
+esac
 [ $# -gt 0 ] || {
     echo "usage: wf outline FILE..." >&2
     exit 2

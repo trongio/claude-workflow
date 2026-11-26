@@ -6,37 +6,75 @@
   "timezone": "Europe/Berlin",
   "push": true,
   "milestone": { "label": "v1 launch" },
-  "board": { "title": "App board", "host": "127.0.0.1", "port": 8090 },
+  "board": { "title": "App board", "host": "127.0.0.1", "port": 8095 },
   "gates": [
-    { "name": "test", "cmd": "bun run test", "when": ["src/", "tests/", "package.json", "bun.lock"] },
+    { "name": "format", "cmd": "bun run format:check", "when": ["*.ts", "*.tsx", "*.css"], "fix": "bun run format" },
     { "name": "lint", "cmd": "bun run lint", "when": ["*.ts", "*.tsx", "eslint.config.*"], "fix": "bun run lint --fix" },
-    { "name": "typecheck", "cmd": "bun run typecheck", "when": ["*.ts", "*.tsx", "tsconfig*.json"] },
-    { "name": "build", "cmd": "bun run build", "when": ["src/", "vite.config.*", "package.json"], "cache": true },
-    { "name": "e2e", "cmd": "bun run e2e", "when": ["src/"], "cache": false }
+    { "name": "typecheck", "cmd": "bun run typecheck", "when": ["*.ts", "*.tsx", "tsconfig*.json"], "heavy": true },
+    {
+      "name": "test",
+      "cmd": "bun test",
+      "when": ["src/", "tests/", "package.json", "bun.lock"],
+      "heavy": true,
+      "timeout": 900,
+      "rerun": { "when": "worker exited unexpectedly", "max": 1 }
+    },
+    { "name": "build", "cmd": "bun run build", "when": ["src/", "vite.config.*", "package.json"], "heavy": true },
+    { "name": "api", "cmd": "go test ./...", "cwd": "services/api", "when": ["services/api/"], "heavy": true },
+    { "name": "e2e", "cmd": "bun run e2e", "when": ["src/"], "cache": false, "release": true, "timeout": 1800 },
+    { "name": "a11y", "cmd": "bun run a11y", "when": ["src/"], "pending": true }
   ],
   "gatesCache": true,
+  "gatesCacheKeys": 8,
+  "gatesJobs": 0,
   "gatesTailLines": 30,
+  "release": { "cmd": "", "log": ".workflow/release.log" },
+  "testAffected": {
+    "cmd": "bun test {files}",
+    "map": [{ "src": "src/**/*.ts", "tests": "tests/**/{name}.test.ts" }]
+  },
   "worktree": {
-    "link": ["node_modules"],
+    "link": [],
     "copy": [".env"],
-    "setup": []
+    "cache": ["node_modules/.cache", ".next/cache"],
+    "setup": ["bun install --frozen-lockfile"],
+    "env": { "DB_DATABASE": "app_{slug}", "PORT": "{port}" },
+    "teardown": ["dropdb --if-exists app_{slug}"],
+    "pool": 0
+  },
+  "finish": { "mode": "pr", "squash": true, "autoMerge": false, "cleanup": true },
+  "tracker": { "kind": "github", "requireLink": false, "onMerge": "" },
+  "planner": { "skipFor": ["S"] },
+  "review": {
+    "minPasses": 1,
+    "maxRounds": 3,
+    "extraAgents": { "high": ["security"] },
+    "ownerHoldHigh": true
   },
   "ui": true,
   "dev": {
     "url": "http://127.0.0.1:5173",
     "login": "Seeded user demo@example.test, credentials in .env.example (SEED_USER, SEED_SECRET); or register a throwaway account.",
-    "viewports": [1440, 390],
+    "viewports": [375, 1440],
     "check": "",
     "screenshots": ".workflow/shots"
   },
-  "docs": { "design": ["docs/design.md"], "spec": ["docs/spec.md"] },
+  "ux": { "locales": ["en", "de"], "widestLocale": "de", "maxFixRounds": 2 },
+  "docs": {
+    "spec": ["docs/spec.md"],
+    "standards": ["docs/STANDARDS.md"],
+    "design": ["docs/design.md"]
+  },
   "risk": { "high": ["migrations/", "src/auth/", "src/billing/", "deploy/"] },
+  "models": {},
+  "stack": { "id": "bun-react", "ui": "shadcn", "decided": "2026-11-26" },
   "overnight": {
     "parallel": 2,
     "maxHours": 24,
     "timeoutMinutes": 120,
     "retries": 2,
     "model": "opus",
-    "permissionFlags": "--dangerously-skip-permissions"
+    "permissionFlags": "--permission-mode auto",
+    "exclude": ["migration", "deploy", "hardware"]
   }
 }

@@ -12,10 +12,20 @@ set -eu
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 wf="$repo/bin/wf"
 dir="${1:-$(mktemp -d "${TMPDIR:-/tmp}/wf-smoke.XXXXXX")}"
+# Scratch is removed on success unless WF_KEEP=1 or a dir was passed; kept on failure for debugging.
+own_scratch=$([ -z "${1:-}" ] && echo 1 || true)
+wf_scratch_cleanup() {
+    local rc="${1:-$?}"
+    if [ "$rc" = 0 ] && [ -n "$own_scratch" ] && [ -z "${WF_KEEP:-}" ]; then
+        git -C "$dir" worktree prune 2>/dev/null || true
+        rm -rf "$dir" "$dir".* "$dir"-*
+    fi
+    return "$rc"
+}
 port="${WF_SMOKE_PORT:-18090}"
 pass=0
 board_pid=""
-trap '[ -n "$board_pid" ] && kill "$board_pid" 2>/dev/null; true' EXIT
+trap 'rc=$?; [ -n "$board_pid" ] && kill "$board_pid" 2>/dev/null; wf_scratch_cleanup "$rc"' EXIT
 
 ok() {
     pass=$((pass + 1))
@@ -40,10 +50,10 @@ for f in "$repo"/.claude-plugin/*.json "$repo"/workflow.example.json "$repo"/sch
 done
 ok "json files parse"
 if command -v shellcheck >/dev/null; then
-    check "shellcheck" shellcheck -x "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh
+    check "shellcheck" shellcheck -x "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/cmd/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh
 fi
 if command -v shfmt >/dev/null; then
-    [ -z "$(shfmt -i 4 -l "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh)" ] && ok "shfmt" || die "shfmt"
+    [ -z "$(shfmt -i 4 -l "$repo"/bin/wf "$repo"/scripts/*.sh "$repo"/scripts/cmd/*.sh "$repo"/scripts/lib/common.sh "$repo"/tests/*.sh "$repo"/install.sh)" ] && ok "shfmt" || die "shfmt"
 fi
 if grep -rqI $'\xe2\x80\x94' --exclude-dir=.git "$repo" 2>/dev/null; then die "em dash found"; else ok "no em dash"; fi
 
@@ -146,7 +156,48 @@ PATH="$stub:$PATH" POLL=1 "$wf" run >"$dir-runner.log" 2>&1
 [ ! -d .workflow/worktrees/WF-2 ] && ok "runner removes merged worktrees" || die "runner worktree cleanup"
 rm -rf "$stub" "$dir-runner.log"
 
+for c in doctor gate-log orphans prune test-affected preview; do
+    "$wf" help | grep -q "wf $c " || die "wf help lists $c"
+    "$wf" "$c" --help >/dev/null || die "wf $c --help"
+done
+ok "infra commands listed and answer --help"
+
+# --help anywhere never runs the command: no card moved, nothing queued, no runner.
+snap() { {
+    git status --porcelain
+    ls .workflow/queue .workflow/logs 2>/dev/null
+    "$wf" list
+} | md5sum; }
+before="$(snap)"
+helps=(gates merge wt-init review-diff doc outline run night init board cards-commit)
+helps+=(claim queue show list next move new prio stats root approve)
+for f in "$repo"/scripts/cmd/*.sh "$repo"/scripts/cmd/*.ts; do helps+=("$(basename "${f%.*}")"); done
+for c in "${helps[@]}"; do
+    out="$(timeout 20 "$wf" "$c" WF-2 --help 2>&1)" || die "wf $c --help exits non-zero: $out"
+    [ -n "$out" ] || die "wf $c --help prints nothing"
+done
+for c in claim queue night move; do timeout 20 "$wf" "$c" --help >/dev/null 2>&1 || true; done
+[ "$(snap)" = "$before" ] && [ ! -d .workflow/.runner.lock ] && ok "--help never runs the command (no card moved, no queue file, no runner)" || die "--help had side effects"
+"$wf" prune --help | grep -q 'set -e' && die "prune --help leaks code"
+"$wf" gates --help | grep -q 'Usage: wf gates' && ! "$wf" gates --help | grep -q 'gates.sh' && ok "help prints only the header comment, with the wf name" || die "gates --help"
+missing_cmds=""
+while read -r c; do
+    "$wf" help | sed -n '1,14p' | grep -qE "(^| )(wf )?$c( |$)" || missing_cmds="$missing_cmds $c"
+done < <(sed -nE "s/^    case '([a-z-]+)':.*/\1/p" "$repo/scripts/wf.ts")
+[ -z "$missing_cmds" ] && ok "wf help header lists every card command (approve too)" || die "help header misses:$missing_cmds"
+
 printf '\n%d checks passed (scratch: %s)\n' "$pass" "$dir"
+
+# Gate, worktree, ledger and runner behavior: tests/infra.sh (WF_SMOKE_INFRA=0 skips).
+if [ "${WF_SMOKE_INFRA:-1}" = 1 ]; then
+    "$repo/tests/infra.sh" "$dir-infra" >"$dir-infra.log" 2>&1 || die "tests/infra.sh: $(tail -n 5 "$dir-infra.log")"
+    tail -n 1 "$dir-infra.log"
+fi
+# Data-safety regressions: tests/safety.sh (WF_SMOKE_SAFETY=0 skips).
+if [ "${WF_SMOKE_SAFETY:-1}" = 1 ]; then
+    "$repo/tests/safety.sh" "$dir-safety" >"$dir-safety.log" 2>&1 || die "tests/safety.sh: $(tail -n 5 "$dir-safety.log")"
+    tail -n 1 "$dir-safety.log"
+fi
 
 if command -v hyperfine >/dev/null && [ "${WF_SMOKE_BENCH:-1}" = 1 ]; then
     { git add -A && git commit -qm "chore: bench"; } >/dev/null 2>&1 || true

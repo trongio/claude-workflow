@@ -1,0 +1,246 @@
+# {{PROJECT}} engineering standards
+
+Normative. Seeded by `/workflow:plan-project` on {{DATE}} for the `{{STACK_ID}}` stack; owned by the
+project from here on. Every agent and every human follows it.
+
+## 0. How to read this document
+
+**Precedence** (when two sources disagree, the higher one wins):
+1. This document, then `docs/UI-UX-STANDARDS.md` for anything a user sees.
+2. The project `CLAUDE.md` (and any nested `CLAUDE.md` for its directory).
+3. `docs/STACK.md` (the stack decision and its pinned versions).
+4. Skills and agent prompts.
+5. Framework and library defaults.
+
+**Every rule names its enforcer.** The tag after a rule says what catches a violation:
+
+| Tag | Meaning |
+| --- | --- |
+| `[hook]` | pre-commit hook; a commit that breaks it does not happen |
+| `[ci: <gate>]` | a gate in `.claude/workflow.json`; `wf gates` fails |
+| `[guard-test]` | a test whose only job is to keep this rule true (it fails when a new violation appears) |
+| `[review]` | a reviewer must check it; listed in the review checklist |
+| `[not yet: X]` | not enforced today; X is the mechanism that would enforce it (file a card for it) |
+
+A rule without a tag is a wish. When review catches the same violation twice, the rule gets a
+`[guard-test]` or a gate: the third repetition becomes a mechanism, not a reminder.
+
+**Ranking when goals conflict:** security and data loss > ease of use for the person doing the job >
+code quality > speed of delivery.
+
+## 1. Definition of done
+
+Merged is not done. A card moves `in-progress -> code-review -> (ux-review) -> verifying -> done`.
+
+- **Done** means: the acceptance criteria are met in the running app (or the real device), and the card's
+  `## Outcome` says how each one was verified: the command, URL, {{#if ui}}viewport, {{/if}}locale, account, or hardware
+  used, and what was observed. "Tests pass" alone verifies only what the tests assert. [review]
+- **Verifying** is the state between landing and done. A card sits there until someone (an agent with the
+  verifier role, or the owner) has exercised the change outside the test suite. [review]
+- The gate table from `wf gates --release` (all gates, not a subset) is pasted into the Outcome as-is. A
+  skipped, pending or timed-out gate is "not proven", never green. A subset of gates is not a release
+  green. [ci] [review]
+- Anything left undone is a new card linked from the Outcome, not a sentence in a summary. [review]
+- Docs that the change makes wrong are fixed in the same change (README, this file, CATALOG.md, API docs). [review]
+<!-- tune: what "verified" means for this product (e.g. a physical device run, a payment sandbox, a staging deploy) -->
+{{#if ui}}
+- Verification for this project: run the change in the local dev app at {{DEV_URL}}, in the widest locale
+  (`{{WIDEST_LOCALE}}`), at 375 px and 1440 px, as a user with the least permissions that should succeed and one that should be refused.
+{{/if}}
+{{#unless ui}}
+- Verification for this project: call the change on the local dev server at {{DEV_URL}} as a caller with the
+  least permissions that should succeed and one that should be refused, and check the response and the
+  stored state.
+{{/unless}}
+<!-- /tune -->
+
+## 2. Types and static analysis
+
+- The strictest practical setting of the language's checker is on from the first commit (see Stack rules
+  below for the exact flags). Loosening a flag needs an owner decision recorded in `docs/STACK.md`. [ci] [review]
+- Boundary data (HTTP input, env, files, queues, third-party responses, JSON columns) is parsed into a
+  typed value once, at the boundary; inside, nothing re-checks or casts it. [review]
+- No `any`/`mixed`/`interface{}` escaping a module; no casts that silence the checker on data that crossed
+  a boundary. [ci] [review]
+- Enums for closed sets, with exhaustive matches; adding a case must break the build where it is unhandled. [ci]
+- **Ratchets only shrink.** Baselines (type checker, linter, duplicate-code and suppression counts) exist to pay
+  down legacy debt, never to get a change green. A change that adds an ignore, a baseline entry or a
+  suppression comment without a named reason and a linked card is refused. [review] [not yet: a baseline-size guard per tool]
+
+## 3. Queries, loops and data access
+
+- **An N+1 fails in tests, not in production.** Where the ORM lazy-loads, lazy loading throws outside
+  production (the exact switch is in Stack rules below); the query-count test below covers the rest. [guard-test]
+- **Every list endpoint has a query-count test** at 1 row and at 20 rows; the count must not grow with
+  rows. [guard-test]
+- **Every query and loop is bounded**: pagination or `LIMIT` with a maximum page size for anything a user
+  can grow; batch jobs walk by id in chunks; no unbounded `IN (...)` built from input; retries have a cap
+  and backoff. [review]
+- **Authorization on every state-changing route, proven by a test on that route.** Each POST/PUT/PATCH/DELETE
+  route (and every child route of a resource: `/orders/{id}/items/{item}` is its own route) has a test that
+  a caller without the permission is refused. A test on the parent route does not cover the child. [guard-test: a route-table test fails when a state-changing route has no authorization marker]
+- **A read that gates a write holds the lock.** "Check the balance, then debit" runs in one transaction
+  with a row lock (`SELECT ... FOR UPDATE`) or is made safe by a unique constraint; idempotency keys on
+  any write a client may retry. [review]{{#if money}} [guard-test: a concurrency test for every money-moving path]{{/if}}
+- **Time zones are passed explicitly.** Never rely on the server or database default zone; store instants
+  in UTC; convert at the edge with an explicit zone; date-only values are dates, not midnight timestamps. [review]
+- **Malformed input fails closed.** A parse error, an unknown enum value, a missing signature or an
+  unreadable config refuses the operation; it never falls back to "allow" or to a default that widens
+  access. [review] [guard-test for auth and webhooks]
+- **Pending is a distinct state.** An accepted-but-not-applied command, an unconfirmed payment, a device
+  that has never connected: each has its own status value, separate from both "done" and "nothing there".
+  "A row exists" is not "it works". [review]
+- **No defensive guards around things that must exist.** If a value cannot be null by construction, do
+  not add `?->`/`if (x)` around it: a guard that cannot fire hides the bug when the invariant breaks.
+  Assert or let it throw. [review]
+{{#if multiTenant}}
+- **Tenant isolation is enforced twice**: the application scope on every tenant-owned query AND database
+  row-level security with a deny-by-default predicate. A guard test fails when a tenant-owned table lacks
+  either. A test per model proves a foreign tenant's row is invisible and unwritable. [guard-test]
+{{/if}}
+
+## 4. One fact, one derivation
+
+- Two surfaces that show the same fact (a status badge on a list and on a detail page, a price in a
+  checkout and on an invoice, a permission in the menu and in the policy) call ONE function. Import it;
+  never restate it. [review]
+- A comment saying "aligned with", "mirrors", "kept in sync with" or "same as" is a finding: it marks a copy
+  that will drift. Replace the copy with the import. [review] [not yet: a grep gate for those phrases]
+- Fixing one surface and not its twin is the same bug: search for every caller of the derivation before
+  closing the card. [review]
+{{#if dupes}}
+- Copy-paste detection runs before every merge (release gate); a new duplicated chunk fails it (the
+  baseline only shrinks). [ci: dupes]
+{{/if}}
+{{#unless dupes}}
+- A new duplicated chunk is a finding: extract it. [review] [not yet: copy-paste gate]
+{{/unless}}
+- **Size budget:** a class or module over ~300 lines, or a function over ~50, needs a reason in review;
+  split by responsibility, not by line count. [review] [not yet: a size-report gate]
+- Reuse first: before adding a helper, component, endpoint or status formula, search for the existing one
+  and extend it with a parameter. [review]
+
+## 5. Errors, logs and secrets
+
+- Errors and logs never leak exception messages, stack traces, SQL, bindings, tokens or personal data to
+  users or to third-party log sinks. Users get a message key; logs get an error id, a class and safe
+  context. [review] [guard-test: a test renders the 500 page and asserts no exception text]
+- Secrets live in the environment or a secret store, never in the repo; `secrets` (gitleaks) runs in the
+  release gate. [ci: secrets]
+{{#if pii}}
+- Personal data: collected only with a purpose, encrypted at rest where it is sensitive (IDs, biometrics,
+  health), excluded from logs and analytics, exportable and deletable per person. [review]
+{{/if}}
+{{#if money}}
+- Money: integer minor units plus a currency code; never floats. Every money movement is idempotent,
+  audited, and reconciled against the provider. [review] [guard-test]
+{{/if}}
+- **Log every action that changes state** in an append-only audit log with who, what, when and the
+  before/after, as locale-neutral `{key, params}`. [review] [not yet: a guard test that every Action writes an audit entry]
+
+## 6. Tests
+
+- A test exists to fail for its named reason. Before trusting a new test, break the code it covers and
+  watch it fail with that reason. [review]
+- **Assert the mechanism, not the class string**: assert that the refused user got a 403 and nothing was
+  written, not that a CSS class or an error message string appears. [review]
+- **No wall-clock or random dates.** Freeze time; build dates relative to the frozen now; seeds are
+  fixed. A test that passes at 23:59 and fails at 00:01 is broken. [review]
+- **Factories can produce the unsafe shape**: another tenant's row, a soft-deleted parent, an expired
+  token, a cancelled subscription, as named states, so guards can be proven. [review]
+- **The test database engine is the production engine** (Postgres in tests if Postgres in production;
+  never SQLite as a stand-in). Isolation via transactions or a database per worker. [ci]
+- Inner loop: affected tests only (`wf gates`); the full suite runs in `wf gates --release`. A flaky test
+  is fixed or quarantined with a card the same day; a rerun is allowed only for a documented, evidenced
+  cause and is named in the result. [ci] [review]
+- Shared test resources (database, ports, dev server) go through locks, never `while pgrep` loops. [review]
+
+## 7. Internationalization
+
+{{#if i18n}}
+Locales: {{LOCALES}}. Widest: `{{WIDEST_LOCALE}}`{{#if ui}} (every visual check runs in it){{/if}}.
+{{/if}}
+{{#unless i18n}}
+Locales: {{LOCALES}}. One locale today, but every string is a key from day one, so adding a language is
+data, not a rewrite.
+{{/unless}}
+{{#if ui}}
+- **Keys only.** No literal user-facing strings in code or templates. That includes `aria-label`, `title`,
+  `alt`, `placeholder` and `sr-only` text, emails, PDF exports, and validation messages. [not yet: i18n check]
+{{/if}}
+{{#unless ui}}
+- **Keys only.** No literal user-facing strings in code: API error and status messages, emails, PDF
+  exports and validation messages are keys. [not yet: i18n check]
+{{/unless}}
+- **An enum is not a label.** A payload or audit entry never carries a raw enum as display text; send a
+  key and let the reader resolve it. [review]
+- **Plurals use ICU MessageFormat** (`{count, plural, one {...} other {...}}`), which knows every locale's
+  plural rules; no `count === 1 ? a : b`. [review] [guard-test: ICU arguments match across locales]
+- **Keys land in all locales together**, in the same change, with real translations or an explicit
+  `needs-translation` marker that a gate reports. [guard-test]
+- Instants stay machine-readable in payloads and audit entries; they are formatted at render time in the
+  reader's zone and locale. [review]
+{{#if ui}}
+- The destructive verb is lexically distinct from the dismiss verb in every locale (see UI/UX standards). [review]
+{{/if}}
+
+## 8. Review
+
+- Review depth scales with risk (`wf risk`): **light** (only `*.md`, `docs/`, `tests/` or `*.css` changed)
+  gets the gates plus a manager spot check of the diff, no reviewer agent; **standard** at least
+  `review.minPasses` (default 1) adversarial reviewer rounds; **high** (paths in `risk.high`: {{RISK_HIGH}},
+  or the built-in high patterns when that list is empty) two independent reviewers at once plus a
+  security pass{{#if ownerReviewsHigh}}, then the owner{{/if}}. [review]
+- Fix commits are re-reviewed as their own diff; review rounds are capped (`review.maxRounds`), and the
+  minor tail becomes cards. [review]
+- Reviewers read with `git show`/`git diff`; read-only agents never check out, stash or reset. [review]
+- Every review checks the rules tagged `[review]` in this file and in `docs/UI-UX-STANDARDS.md` that apply
+  to the diff. [review]
+<!-- tune: owner review policy for this project -->
+- Owner review: {{REVIEW}}.
+<!-- /tune -->
+
+## 9. Agents and parallel work
+
+- Implementation subagents work in **isolated git worktrees on disjoint file sets**, one card each. [review]
+- The manager session integrates every branch and runs every gate; an agent's "tests pass" is not
+  evidence until the manager reruns them. [review]
+- Worktrees are made runnable by `wf wt-init` (real installs or copy-on-write, never symlinked bundler
+  directories). [ci]
+- Read-only agents never mutate the checkout (`checkout`, `stash`, `reset`, `switch`). [review]
+- Agents never type gate commands by hand; they run `wf gates` and paste its table. [review]
+- **The third repetition becomes a script.** When a sequence of commands is run a third time, it becomes
+  a `wf` subcommand, a project script or a skill, and the docs point to it. [review]
+- Versions come from `docs/STACK.md`'s version table (generated by `wf versions`), never from memory. A
+  version not in that table is not written into code, config or docs. [review] `wf doctor` warns when the
+  table is older than 90 days; `wf versions --check docs/STACK.md` re-verifies it against the registries.
+
+## 10. Handoff discipline
+
+- Every session that stops mid-work leaves the board, the card's `## Notes` and `wf handoff` current, so a
+  fresh session can resume from the files alone. [review]
+- Decisions the owner makes are recorded where the next reader looks (the card, `docs/STACK.md`, this
+  file), dated, with the reason. [review]
+- A handoff describes a dated snapshot; the next session re-checks branch, status and the live tracker
+  before acting on it. [review]
+
+{{STACK_STANDARDS}}
+
+## Project-specific rules
+
+<!-- tune: rules that only this product needs (domain invariants, regulatory constraints, hardware safety) -->
+{{#if hardware}}
+- Device control goes through a queued command channel with acknowledgements; "sent" is not "applied".
+  Life-safety behaviour (fail-safe egress, interlocks) is enforced by the device, never gated by the
+  software. A simulator run never replaces a check on the physical device. [review]
+{{/if}}
+{{#if offline}}
+- Offline: the client queues writes with idempotency keys and shows each as pending until the server
+  confirms; conflicts surface to the user, never resolve silently. [review]
+{{/if}}
+{{#if realtime}}
+- Realtime: a pushed update is a hint to refetch, not the source of truth; the page is correct after a
+  reload with no socket. Channels are authorized per subscriber. [review] [guard-test]
+{{/if}}
+- (Add domain invariants here, each with its enforcer.)
+<!-- /tune -->

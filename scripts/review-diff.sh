@@ -37,7 +37,7 @@ while [ $# -gt 0 ]; do
         shift
         ;;
     -h | --help)
-        sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+        wf_help "$0"
         exit 0
         ;;
     -*)
