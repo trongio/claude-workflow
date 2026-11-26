@@ -77,7 +77,10 @@ cards-commit)
     # "# wf-help: ..." (or "// wf-help: ...") line that `wf help` lists.
     if [ -x "$scripts/cmd/$cmd.sh" ]; then exec "$scripts/cmd/$cmd.sh" "$@"; fi
     if [ -f "$scripts/cmd/$cmd.ts" ]; then
-        command -v bun >/dev/null || { echo "wf: bun is required (https://bun.sh)" >&2; exit 2; }
+        command -v bun >/dev/null || {
+            echo "wf: bun is required (https://bun.sh)" >&2
+            exit 2
+        }
         exec bun "$scripts/cmd/$cmd.ts" "$@"
     fi
     runtime "$cmd" "$@"

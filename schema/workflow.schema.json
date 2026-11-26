@@ -187,6 +187,13 @@
           "type": "integer",
           "default": 0,
           "description": "Reusable worktrees kept warm (reset to base) instead of create/destroy per card. 0 = off."
+        },
+        "teardown": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Commands run in the worktree before it is removed (wf finish, wf prune --apply, runner). {id} {slug} {port} expand, e.g. dropdb --if-exists app_{slug}. Leave nothing behind."
         }
       }
     },
