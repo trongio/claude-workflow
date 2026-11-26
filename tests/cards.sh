@@ -46,6 +46,7 @@ field() { # field ID KEY: a front matter value, from tasks/ or tasks/archive/
         [ -f "$f" ] && sed -n "s/^$2: *//p" "$f" && return
     done
 }
+criterion() { sed -i 's/^- \[ \]$/- [ ] it works/' "$dir"/tasks/"$1"-*.md; }
 write_prose() { sed -i 's/<!-- what shipped and why, decisions, follow-ups -->/Shipped it./' "$dir"/tasks/"$1"-*.md; }
 commit_in() { # commit_in DIR FILE
     echo "change" >"$1/$2"
@@ -79,6 +80,7 @@ expect "new card with links" "$wf" new "Alpha" --links "#7" --tags deploy
 expect "new card" "$wf" new "Beta"
 "$wf" new "Gamma" --depends T-99 2>"$dir/.err" >/dev/null
 grep -q "unknown card" "$dir/.err" && ok "unknown depends warns" || die "unknown depends warning"
+for c in T-1 T-2 T-3; do criterion $c; done
 git add -A && git commit -qm "chore(tasks): cards"
 
 # start
@@ -88,6 +90,7 @@ wt="$dir/.workflow/worktrees/T-1"
 [ "$(field T-1 status)" = in-progress ] && [ "$(field T-1 branch)" = wf/T-1 ] && ok "card in-progress with branch" || die "card fields"
 [ "$(git branch --show-current)" = main ] && ok "main checkout HEAD untouched" || die "main HEAD moved"
 expect "start again reuses the worktree" "$wf" start T-1
+(cd "$wt" && "$wf" list) | grep -q '^T-1 .*in-progress' && ok "a worktree sees the main checkout's board" || die "board from worktree"
 commit_in "$wt" feature.txt
 
 # risk

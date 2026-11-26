@@ -143,7 +143,8 @@ export function parseCard(text: string, file: string, withBody = true): Card | n
     }
     if (!meta.id) return null;
     const body = withBody ? m[2].trim() : '';
-    const checks = body.match(/^\s*- \[[ xX]\]/gm) ?? [];
+    // An empty `- [ ]` is the template's placeholder, not a criterion.
+    const checks = body.match(/^\s*- \[[ xX]\][ \t]+\S/gm) ?? [];
     const size = String(meta.size || 'M');
     const str = (k: string) => (meta[k] === undefined || meta[k] === '' ? undefined : String(meta[k]));
     return {
@@ -257,7 +258,7 @@ export function tickAcceptance(text: string, indexes: number[]): { text: string;
     if (!m || m.index === undefined) return { text, missing: indexes };
     let n = 0;
     const found = new Set<number>();
-    const ticked = m[0].replace(/^(\s*- \[)[ xX](\])/gm, (all, a, b) => {
+    const ticked = m[0].replace(/^(\s*- \[)[ xX](\][ \t]+\S)/gm, (all, a, b) => {
         n++;
         if (!indexes.includes(n)) return all;
         found.add(n);

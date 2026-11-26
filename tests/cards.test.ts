@@ -47,6 +47,9 @@ describe('parseCard', () => {
     test('counts acceptance checkboxes', () => {
         expect(lib.parseCard(CARD, 'x')?.acceptance).toEqual({ done: 1, total: 2 });
     });
+    test('an empty checkbox is a placeholder, not a criterion', () => {
+        expect(lib.parseCard('---\nid: A-1\n---\n## Acceptance\n\n- [ ]\n- [ ] real\n', 'x')?.acceptance).toEqual({ done: 0, total: 1 });
+    });
     test('skips the body when asked (archived cards)', () => {
         const c = lib.parseCard(CARD, 'x', false);
         expect(c?.body).toBe('');
@@ -128,6 +131,11 @@ describe('archive path', () => {
         expect(existsSync(`${projectRoot}tasks/archive/T-1-one.md`)).toBe(true);
         expect(existsSync(`${tmp}/tasks/archive`)).toBe(false);
         expect(readFileSync(`${projectRoot}${moved}`, 'utf8')).toContain('status: done');
+    });
+    test('archived cards are stubs by default and read in full on request', () => {
+        expect(lib.readCards()[0]).toMatchObject({ id: 'T-1', status: 'done', title: '' });
+        expect(lib.readCards({ archive: 'meta' })[0]).toMatchObject({ id: 'T-1', status: 'done', title: 'One', body: '' });
+        expect(lib.readCards({ archive: 'body' })[0].body).toContain('Ship it.');
     });
 });
 
