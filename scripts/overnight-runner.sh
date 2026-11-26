@@ -8,7 +8,10 @@
 # dependencies, like a manual claim), skipped when its tags include an
 # overnight.exclude entry, and run as `claude -p "/workflow:task <ID> --headless"`
 # in its own worktree (.workflow/worktrees/<ID>, branch wf/<ID>), up to
-# PARALLEL at a time. The runner sleeps in `wait -n` until a card finishes.
+# PARALLEL at a time, with WF_HEADLESS=1 exported (owner-only commands such as
+# wf approve refuse it). The runner sleeps in `wait -n` until a card finishes.
+# After every session its process group and anything still running inside the
+# card's worktree (dev servers it started) are stopped.
 #
 #   .workflow/queue/<ID>.task   one card per file; optional `# model: opus` line
 #   .workflow/done/ failed/ skipped/   finished queue files land here
@@ -35,7 +38,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$here/lib/common.sh"
 
 case "${1:-}" in -h | --help)
-    sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+    wf_help "$0"
     exit 0
     ;;
 esac
@@ -68,15 +71,11 @@ summary() { printf -- '- %s %s: %s\n' "$(date '+%F %T')" "$1" "$2" >>"$logs/summ
 new_uuid() { uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]' || cat /proc/sys/kernel/random/uuid; }
 stopped() { [ -f "$stop" ] || [ "$(date +%s)" -ge "$deadline" ]; }
 
-# Single instance.
-if ! mkdir "$dir/.runner.lock" 2>/dev/null; then
-    if kill -0 "$(cat "$dir/.runner.lock/pid" 2>/dev/null)" 2>/dev/null; then
-        log "another runner is active ($dir/.runner.lock)"
-        exit 1
-    fi
-    rm -rf "$dir/.runner.lock" && mkdir "$dir/.runner.lock"
+# Single instance: the same atomic stale-owner takeover as wf_lock.
+if ! wf_lock_dir "$dir/.runner.lock" 0; then
+    log "another runner is active ($dir/.runner.lock)"
+    exit 1
 fi
-echo $$ >"$dir/.runner.lock/pid"
 trap 'rm -rf "$dir/.runner.lock"' EXIT
 declare -A running=()
 # Killed: stop every claude session (own process groups, recorded in
@@ -162,7 +161,7 @@ supervise() {
     [ $((deadline - $(date +%s))) -lt "$limit" ] && limit=$((deadline - $(date +%s)))
     rm -f "$marker"
     set -m
-    (cd "$wt" && exec claude "$@" >"$outfile" 2>>"$logfile" </dev/null) &
+    (cd "$wt" && WF_HEADLESS=1 exec claude "$@" >"$outfile" 2>>"$logfile" </dev/null) &
     pid=$!
     (
         end=$(($(date +%s) + limit))
@@ -176,6 +175,10 @@ supervise() {
     rc=$?
     kill -- "-$wd" 2>/dev/null
     wait "$wd" 2>/dev/null
+    # Whatever the session left behind: its process group, then anything with
+    # its cwd inside the worktree (a server that left the group).
+    wf_kill_tree "$pid"
+    wf_sweep "$wt" >>"$logfile" 2>&1
     rm -f "$dir/run/$id.pids"
     set +m
     case "$(cat "$marker" 2>/dev/null)" in
