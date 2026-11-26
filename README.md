@@ -1,217 +1,244 @@
 # claude-workflow
 
-A Claude Code plugin that turns your session into a **manager** that plans,
-delegates to **tiered subagents**, runs your **quality gates**, scales
-**review depth by risk**, verifies the result **in a browser**, and records
-every task on a **markdown task board** in your repo.
+![claude-workflow: a manager session, tiered subagents and a task board](docs/images/hero.png)
 
-It was extracted from a production e-commerce project where it shipped
-hundreds of tasks, including unattended overnight runs. The repo is a
-plugin and its own marketplace, so it installs with one line.
+A Claude Code plugin that turns your session into an engineering manager. It
+plans the project, splits each task into briefs, delegates them to tiered
+subagents working in their own git worktrees, runs your quality gates, scales
+review depth by risk, checks the result in a real browser, and records every
+task on a markdown board in your repo.
 
-## Install
+The bookkeeping is scripted. Branches, worktrees, gate runs, page checks,
+outcome records and cleanup are `wf` commands that print a few lines, so the
+model spends its tokens on judgment instead of on clicking and reading logs.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/trongio/claude-workflow/main/install.sh | bash
+> This is a community plugin for [Claude Code](https://docs.claude.com/en/docs/claude-code).
+> It is not an Anthropic product and is not endorsed by Anthropic.
+
+## Set it up with one prompt
+
+Open Claude Code in the repo you want to use it in and paste this:
+
+```text
+Set up the claude-workflow plugin (github.com/trongio/claude-workflow) in this repo, end to end.
+Ask me before anything destructive (deleting, overwriting, force flags) and never push.
+
+1. Install it at project scope with Bash:
+   claude plugin marketplace add trongio/claude-workflow --scope project
+   claude plugin install workflow@trongio --scope project
+   (if the marketplace is already added: claude plugin marketplace update trongio)
+2. Check that bun, jq, git and gh are on PATH, plus bash 4 or newer. For each missing tool,
+   tell me the install command for this OS and ask before running it.
+3. Ask me to type /reload-plugins so the workflow skills load, and wait until I have.
+4. If this repo is empty or has no docs/STACK.md and no clear stack, ask me to run
+   /workflow:plan-project. Otherwise ask me to run /workflow:init. Answer its questions with me.
+5. Run `wf doctor` and fix every failure that is configuration; list the rest for me.
+6. Show `wf status` and explain in a few lines what was set up, what I should fill in by hand
+   in .claude/workflow.json, and how to start the first task (/workflow:task "<what to build>").
+Do not commit unless I ask.
 ```
 
-Or by hand, inside Claude Code or a shell:
+Prefer a shell? `curl -fsSL
+https://raw.githubusercontent.com/trongio/claude-workflow/main/install.sh |
+bash` adds the marketplace and installs the plugin (`bash -s -- --project`
+for project scope).
 
-```bash
-claude plugin marketplace add trongio/claude-workflow
-claude plugin install workflow@trongio                 # user scope (all repos)
-claude plugin install workflow@trongio --scope project # this repo only, shared via .claude/settings.json
-```
+## Why
 
-Add `--project` to the curl line (`... | bash -s -- --project`) for project
-scope. Requirements: Claude Code, `git`, `jq`, [Bun](https://bun.sh) (the card
-CLI and board), bash 4+ (macOS: `brew install bash`). Optional: `rg`, `fd`,
-`ast-grep`, a Playwright MCP server for the verifier, `hyperfine` for the
-smoke benchmarks.
+It comes from two production projects (a multi-tenant SaaS with hardware in
+the loop, and a commerce platform) where it ran daily, including unattended
+overnight runs. Every rule in the prompts and scripts exists because its
+absence once cost a shipped defect or a lost afternoon. A few of them:
 
-Then, in the repo you want to run it in:
+- **A scripted page check returns one JSON line** (status, console errors,
+  overflow, clipped text, screenshot path) instead of 1,000 to 3,000 tokens
+  per browser-automation step. The verifier runs scripts first and opens a
+  browser only for what a script cannot judge.
+- **Merged is not done.** A fully green merge once shipped two critical bugs
+  that a review loop caught only afterwards. Cards now land in `verifying`,
+  and reach `done` only with a note on how the change was observed working.
+- **Zero overflow is not visual verification.** A layout check passed while a
+  label in the widest locale broke mid-word and a sentence clipped inside a
+  scrolling cell. Checks run in the locale with the longest strings, and the
+  screenshots are opened and looked at.
+- **A disabled gate looks exactly like a green one.** A reset git hooks path
+  silently switched off every pre-commit check for an unknown period. Now a
+  skipped, pending or missing gate reports "not proven", and `wf doctor`
+  checks the hooks path.
+- **A comment is not a mechanism.** "Kept in sync with X" sat above a copy
+  that had already drifted. The reviewer flags such comments and asks for a
+  shared import.
+- **Scripts beat repetition.** One seven-step integration sequence was typed
+  by hand seven times before it became a script. The rule now: the third
+  repetition becomes a command.
 
-```
-/workflow:init
-```
+## The lifecycle
 
-It creates `tasks/`, detects your stack (package.json, bun.lock, composer.json,
-pyproject.toml, go.mod, Cargo.toml, justfile) and writes `.claude/workflow.json`
-with gate commands prefilled, then adds a short Workflow section to CLAUDE.md.
-
-## Use
-
-```
-/workflow:task "Add CSV export to the orders page"   # one task, end to end
-/workflow:task APP-12                                 # an existing card
-/workflow:next                                        # claim 2 cards, run them in parallel
-/workflow:next 1 | /workflow:next drain               # one card | until the board is empty
-/workflow:gates                                       # run the gates now
-/workflow:board serve                                 # live board on http://127.0.0.1:8090
-```
-
-From a shell (`wf` is on Claude's Bash PATH automatically; symlink
-`~/.claude/plugins/cache/trongio/workflow/<version>/bin/wf` into `~/.local/bin`
-for your own shell):
-
-```bash
-wf new "Export orders as CSV" --size M --area backend --milestone
-wf list                # active cards
-wf next                # what would be claimed next
-wf claim 2             # claim two cards (WIP limit applies)
-wf move APP-12 code-review
-wf show APP-12
-wf stats               # milestone progress, velocity, ETA, waiting on owner
-wf board               # live board
-wf gates [--fix]       # parallel gates
-wf night 8             # queue 8 cards and run them unattended (see below)
-```
-
-## The loop
+![Card lifecycle from todo to done](docs/images/lifecycle.svg)
 
 ```
- owner: "build X"  or  a card in tasks/
-        |
-  1 intake     claim or create the card ............ wf claim / wf new
-  2 plan       planner (+ researcher) -> file map, acceptance, risk level, workstreams
-  3 mocks      UX-heavy only: 2-3 HTML mocks -> owner-review, owner picks
-  4 delegate   one implementer per workstream, own worktree + branch, self-contained brief
-  5 integrate  wf merge each branch -> card to code-review -> wf gates (mechanic)
-  6 simplify   /simplify on the integrated diff -> wf gates
-  7 review     reviewer x0 / x1 / x2 by risk -> fixes -> wf gates
-  8 verify     card to ux-review -> verifier in the browser at each viewport
-     critique  ux-critic on the screenshots when the look changed -> fixes
-  9 record     ## Outcome on the card: shipped, risk, decisions, results, gates
- 10 finish     merge + push + done, or owner-review for high risk and sign-offs
+ wf start      branch wf/<ID> + its own worktree, card -> in-progress
+ plan          planner reads the spec and standards -> file map, risk, briefs
+ mocks         UX-heavy only: 2-3 HTML mocks, the owner's pick is the spec
+ delegate      implementers in parallel, each in a worktree, brief from wf brief
+ integrate     merge streams -> wf gates (fast: affected tests only)
+ review        IN PARALLEL: reviewer(s) + verifier (wf shots, wf check) + ux-critic
+ fix           one merged fix round by a fresh implementer; only the fix diff is re-reviewed
+ release       wf gates --release: every gate, uncached; a subset is not green
+ outcome       wf outcome writes the record; the model fills the prose
+ owner hold    high risk stops in owner-review (wf park)
+ wf finish     land per finish.mode (PR by default), card -> verifying, tear down
+               the worktree, branch, DB and ports; wf doctor shows no leftovers
+ done          wf move <ID> done --verified "how it was observed"
 ```
 
-The manager writes code only for trivial one-file edits. Everything else goes
-to an agent with a self-contained brief, so the manager's context holds
-conclusions instead of file dumps.
+Review depth scales with risk. `wf risk` decides it from the diff:
 
-### Risk levels
-
-| Level | Covers | Required before done |
+| Level | Covers | Required |
 |---|---|---|
-| light | copy, docs, styles, config text, test-only changes, card edits | gates + one spot check of the touched screen (none for docs/tests) |
-| standard | normal features and bug fixes | gates, one reviewer, verifier, ux-critic if the look changed |
-| high | money, auth and permissions, migrations that alter or drop data, infra and deploy, paths in `risk.high` | gates, two independent reviewers (the second re-examines the first), verifier, ux-critic if the look changed, then owner-review |
+| light | copy, docs, styles, config text, test-only | gates + one spot check; no simplify pass |
+| standard | normal features and fixes | gates, one reviewer, verifier, ux-critic if the look changed |
+| high | auth, money, data migrations, infra, paths in `risk.high` | two independent reviewers at once plus `review.extraAgents.high`, verifier, ux-critic, then the owner |
 
-The highest-risk file in the diff sets the level; otherwise the manager takes
-the cheapest level the diff allows.
+Fix rounds are capped (`review.maxRounds`, `ux.maxFixRounds`); remaining
+minors become cards instead of another round.
 
-### Agents and tiers
+## The planning phase
+
+![Planning: stack survey, design directions, standards, gates, first cards](docs/images/planning.svg)
+
+Before the first card, `/workflow:plan-project` (details in
+[`skills/plan-project/SKILL.md`](skills/plan-project/SKILL.md)) runs a short
+planning phase on an empty or young repo:
+
+1. `wf detect` reads what exists; the researcher surveys candidate stacks with
+   versions from `wf versions` (each with its release URL and fetch date,
+   never recalled), support windows, ecosystem and hosting cost.
+2. The ux-critic proposes two design directions (system, type scale, density,
+   colour use, tone) under anti-template rules.
+3. The owner decides; the decision is recorded in `docs/STACK.md`, the
+   standards in `docs.standards`, and the gates that enforce them in
+   `.claude/workflow.json`.
+4. `wf plan scaffold` and `wf plan cards` turn the plan into a skeleton and a
+   first milestone of cards.
+
+On an existing repo, `/workflow:init` does the setup part only.
+
+## Agents
 
 | Agent | Model | Job |
 |---|---|---|
-| `planner` | fable | file-level plan, acceptance criteria, risk level, workstream briefs (read-only) |
-| `reviewer` | fable | adversarial review of the diff (read-only) |
-| `ux-critic` | fable | design and usability critique of the screenshots (read-only) |
-| `implementer` | opus | one workstream: code, tests, gates |
-| `researcher` | opus | library internals, external APIs, sourced answers (read-only) |
-| `verifier` | opus | drives the dev app at each viewport, reports what rendered |
-| `mechanic` | sonnet | gate runs, formatter fixes, card moves, Outcome entries |
+| `planner` | fable | file-level plan, acceptance criteria, risk, self-contained briefs (read-only) |
+| `reviewer` | fable | adversarial review with a grade per touched area (read-only) |
+| `ux-critic` | fable | design critique of the screenshots; design directions (read-only) |
+| `implementer` | opus | one workstream: code, tests, gates, cleanup |
+| `researcher` | opus | library internals, external APIs, stack surveys (read-only) |
+| `verifier` | opus | scripted page checks first, browser second, at every viewport |
+| `mechanic` | sonnet | multi-step mechanical edits (never a single command) |
 | `scout` | haiku | "where is X" lookups (read-only) |
 
-Rule of thumb: pick the cheapest tier whose failure mode is acceptable. In a
-session they appear as `workflow:planner`, `workflow:reviewer`, and so on.
-`fable` is the strongest model alias; if your account has no access to it,
-override those three agents (below) with `model: opus`.
+`fable` is the strongest model alias; without access to it, set `models` in
+`.claude/workflow.json` (for example `{"planner": "opus"}`) or override the
+agent in `.claude/agents/`.
 
-## Task board
+## Commands
 
-One markdown file per card in `tasks/` (done cards move to `tasks/archive/`).
-Front matter: `id, title, status, milestone, size, area, priority, blocked,
-depends, created, started, done, branch, links`; body: `## Goal`,
-`## Acceptance` (checkboxes), `## Notes`, `## Outcome`. The full format is in
-the `tasks/README.md` that `/workflow:init` writes.
+Skills (type them in Claude Code):
 
-Statuses: `backlog, todo, in-progress, code-review, ux-review, owner-review,
-done`. `wf claim` respects the WIP limit (default 2), skips blocked cards and
-cards with unfinished `depends`, puts milestone cards first and prefers
-different areas so parallel work rarely collides. A `blocked` value starting
-with `owner` lists the card under "waiting on owner".
+| Skill | What it does |
+|---|---|
+| `/workflow:plan-project` | stack decision, standards and gates before any card |
+| `/workflow:init` | set up an existing repo: config, board, CLAUDE.md section, doctor |
+| `/workflow:task <ID or text>` | one task through the whole lifecycle |
+| `/workflow:next [n or drain]` | claim cards and run each independently in the background |
+| `/workflow:gates [--release]` | run the gates and print the table |
+| `/workflow:board [serve]` | board summary, or the live board page |
 
-The board page shows milestone progress by points (S=1, M=2, L=4, XL=8), an ETA
-from 14-day velocity (blocked points excluded), who is blocked, recent commits,
-and updates live. Cards always resolve to the **main checkout**, so every
-worktree sees and edits the same board; `wf cards-commit "<msg>"` commits card
-changes under the same lock `wf merge` uses.
+`wf` (on Claude's Bash PATH while the plugin is enabled; for your own shell,
+`ln -s ~/.claude/plugins/cache/trongio/workflow/*/bin/wf ~/.local/bin/wf`):
 
-## Gates
+| Area | Commands |
+|---|---|
+| Cards | `wf new`, `wf list`, `wf next`, `wf claim`, `wf show`, `wf move ID STATUS [--verified "how"]`, `wf note`, `wf park ID "owner: ..."`, `wf prio`, `wf status`, `wf board` |
+| Task lifecycle | `wf start ID`, `wf plan-save ID FILE`, `wf brief ID --stream N`, `wf risk [BASE]`, `wf outcome ID [--tick 1,2]`, `wf finish ID`, `wf cards-commit -m "msg"`, `wf handoff` |
+| Gates | `wf gates [--release] [--json] [--last] [--fix]`, `wf gate-log [GATE]`, `wf test-affected [BASE]` |
+| Health | `wf doctor`, `wf orphans [--kill]`, `wf prune [--apply]`, `wf fix-sweep [--since DATE]` |
+| Verification | `wf check URL... [--viewports] [--locale] [--expect TEXT]`, `wf shots ID [paths]`, `wf flow FILE.json`, `wf preview up or down ID` |
+| Search and text | `wf rgx PATTERN [PATH]`, `wf outline FILE`, `wf doc FILE [section]`, `wf review-diff [BASE]`, `wf lang get or set or missing` |
+| Planning | `wf detect [--json]`, `wf versions PKG... or --check docs/STACK.md`, `wf plan set or scaffold or cards` |
+| Overnight | `wf queue N`, `wf run`, `wf night N` (stop with `touch .workflow/STOP`) |
 
-```json
-"gates": [
-  { "name": "test", "cmd": "bun run test", "when": ["src/", "tests/"] },
-  { "name": "lint", "cmd": "bun run lint", "when": ["*.ts"], "fix": "bun run lint --fix" }
-]
-```
+Every command has `--help`; `wf help` lists them all.
 
-`wf gates` runs every selected gate in parallel and prints `gate | result | sec
-| note`, plus the last 30 lines of each failure. A gate whose `when` globs
-match no changed file (against the merge base, plus uncommitted and untracked
-files) is skipped. A gate whose inputs (the content of its `when` paths, or the
-whole tree) and command match its last PASS reports `cached` (stored in
-`.git/workflow-gates-cache`; `--no-cache`, `"cache": false` or
-`"gatesCache": false` to turn it off). Flags: `--all`, `--only a,b`, `--fix`,
-`--base REF`, `--list`.
+## Configuration
 
-## Overnight runner
-
-```bash
-wf queue 8       # write the next 8 claimable cards to .workflow/queue/
-wf run           # drain the queue          (wf night 8 does both)
-touch .workflow/STOP   # stop; running cards stay queued
-```
-
-Each card runs as `claude -p "/workflow:task <ID> --headless"` in its own
-worktree (`.workflow/worktrees/<ID>`, branch `wf/<ID>`), `overnight.parallel`
-at a time. Headless runs never ask: owner decisions are parked in
-`owner-review`. Usage-limit errors sleep until the reset time without spending
-a retry, overloads back off, timed-out attempts resume the same session. Logs
-and `summary.md` are in `.workflow/logs/`.
-
-It passes `--dangerously-skip-permissions` by default, because an unattended
-run cannot answer prompts. Only queue cards you would approve wholesale, on a
-clean tree you can roll back, or set `overnight.permissionFlags`.
-
-## Configuration (`.claude/workflow.json`)
-
-A full example is in [`workflow.example.json`](workflow.example.json); the
-schema with a description of every key is
+`.claude/workflow.json`. A full example is
+[`workflow.example.json`](workflow.example.json); every key is described in
 [`schema/workflow.schema.json`](schema/workflow.schema.json).
 
 | Key | Default | Meaning |
 |---|---|---|
-| `idPrefix` | repo initials | card id prefix (`APP` -> `APP-12`) |
-| `baseBranch` | origin HEAD, else `main` | merge target and gate diff base |
-| `wipLimit` | 2 | max active cards |
-| `timezone` | system | zone for card dates |
-| `push` | true | push after merging |
-| `milestone.label` | `milestone` | name of the goal milestone cards count toward |
-| `board.title/host/port` | `<repo> board`, 127.0.0.1, 8090 | board server |
-| `gates[]` | detected | `{name, cmd, when?, fix?, cache?}` |
-| `gatesCache`, `gatesTailLines` | true, 30 | gate cache switch, failure tail length |
-| `worktree.link/copy/setup` | detected | dirs to hardlink, files to copy, commands to run in a new worktree |
-| `ui` | detected | false makes the verifier use a non-UI surface and the ux-critic skip |
-| `dev.url/login/viewports/check/screenshots` | | the local dev app for the verifier and ux-critic; `login` says where dev credentials live, never the secret |
-| `docs.design`, `docs.spec` | [] | ground-truth docs for the critic and planner |
+| `idPrefix`, `baseBranch`, `wipLimit`, `timezone` | repo initials, origin HEAD, 2, system | card ids, landing target, max active cards, card dates |
+| `push` | false | whether finishing a task pushes |
+| `gates[]` | detected | `{name, cmd, when, fix, cache, cwd, timeout, pending, release, rerun, heavy}` |
+| `gatesJobs`, `gatesCacheKeys` | CPU/2, 8 | heavy gates at once; cache entries per gate so parallel worktrees do not evict each other |
+| `release.cmd` | all release gates | the full CI command that authorizes landing |
+| `testAffected` | | map from source globs to tests for the inner loop |
+| `worktree.copy`, `cache`, `setup`, `env`, `pool` | detected | make each worktree runnable: files to copy, copy-on-write build caches, setup commands, per-worktree env (`{id}`, `{slug}`, `{port}`), warm pool |
+| `worktree.teardown` | [] | commands run when a worktree is removed, same placeholders, e.g. `dropdb --if-exists app_{slug}` |
+| `finish` | `pr`, squash, no auto merge, cleanup | how `wf finish` lands a task |
+| `tracker` | none | mirror cards to GitHub issues; `onMerge` runs on landing |
+| `planner.skipFor` | `["S"]` | sizes that skip the planner |
+| `review` | 1 pass, 3 rounds, owner hold on high | review depth, round cap, extra agents per risk |
+| `ui`, `dev.*` | detected | the local dev app, login hints (where credentials live, never the secret), viewports |
+| `ux` | | locales, the widest locale, UX fix round cap |
+| `docs.spec`, `docs.standards`, `docs.design` | [] | ground truth for planner, every agent, the critic |
 | `risk.high` | [] | paths that make a diff high risk |
-| `overnight.*` | 2 parallel, 24h, 120 min, 2 retries, opus | runner settings |
+| `models` | | model per agent role |
+| `overnight` | 2 parallel, auto permission mode | the unattended runner; `exclude` tags it never picks |
 
-## Customize
+## Safety defaults
 
-- **Override an agent**: put a file with the same `name` in your repo's
-  `.claude/agents/` (for example `.claude/agents/reviewer.md` with your
-  stack's gotchas). The skills prefer a project agent over `workflow:<name>`,
-  and project agents outrank plugin agents in Claude Code's own lookup.
-- **Add project skills**: anything in `.claude/skills/<name>/SKILL.md` sits
-  next to the plugin's (for example a component inventory your implementers
-  run before creating UI). Mention it in CLAUDE.md so agents use it.
-- **Conventions** live in your CLAUDE.md; every agent reads it first. Keep
-  stack rules, code standards and "never do X" there, not in the plugin.
-- **Build tools, don't repeat work**: when a procedure repeats, turn it into a
-  script, `just` recipe or skill and note it in CLAUDE.md.
+- **PR mode.** `finish.mode` is `pr`: the task branch is pushed only when you
+  allow pushing, and the main checkout is never checked out or merged into, so
+  a served dev app and other sessions keep running.
+- **Push off.** `push` defaults to false. Pushing is an explicit project
+  choice.
+- **Auto permission mode overnight.** The runner passes `--permission-mode
+  auto`, not `--dangerously-skip-permissions`, and skips cards tagged
+  `migration`, `deploy` or `hardware` (`overnight.exclude`).
+- **High risk waits for you.** Auth, money, migrations and infra stop in
+  `owner-review` before landing.
+- **Read-only agents stay read-only.** Planner, reviewer, scout and
+  researcher have no edit tools; verifier and ux-critic cannot edit files.
+  None of them may check out, stash or reset in any checkout.
+- **Nothing left behind.** `wf finish` tears down the worktree, branch, test
+  database and ports; `wf doctor` reports leftovers, `wf prune` and `wf
+  orphans` remove them.
+
+## FAQ
+
+**Does it work without a UI?** Yes. Set `ui` to false; the verifier uses the
+nearest real surface (CLI, HTTP API, a read-back script) and the ux-critic
+skips.
+
+**My project has its own reviewer prompt.** Put it in
+`.claude/agents/reviewer.md`. Project agents win over the plugin's.
+
+**Is it slow?** The inner loop runs only changed gates and affected tests,
+caches by content hash, and runs review, verification and critique in
+parallel. The full suite runs once, at `wf gates --release`.
+
+**Does it need GitHub?** No. `tracker.kind` defaults to none and
+`finish.mode` can be `merge` for a solo repo nobody serves from.
+
+**What if a session dies mid-task?** Implementers commit each finished step.
+`wf handoff` writes a snapshot (branch, cards in flight, unpushed commits,
+live worktrees) that a fresh session resumes from.
+
+**Can I run it overnight?** `wf night 8` queues eight claimable cards and runs
+them headless in their own worktrees. Owner decisions are parked, not
+guessed. Queue only cards you would approve wholesale.
 
 ## Update and uninstall
 

@@ -16,8 +16,9 @@ not include a fresh gate table.
 
 NEVER run `git checkout`, `switch`, `stash`, `reset`, `restore` or copy files
 in any checkout, including the main one. Other sessions and the served app
-share it; one stash once wiped a colleague's uncommitted work. Read revisions
-with `git show REV:PATH`.
+share it: a branch switch there moves HEAD for every session and the served
+app, and a stash hides someone else's uncommitted work. Read revisions with
+`git show REV:PATH`.
 
 ## What to check
 
