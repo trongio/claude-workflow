@@ -5,7 +5,7 @@
 //   next [n]                        the next n claimable cards, no side effects
 //   claim [n] | claim <ID> [--dry-run]   claim up to n cards (default: WIP limit) or one named card
 //   move <ID> <status> [--branch b] [--blocked "text"|""] [--verified "how"] [--force]
-//   new "<title>" [--size M] [--area x] [--milestone] [--status todo] [--priority 2] [--depends A-1,A-2] [--links "#12"]
+//   new "<title>" [--size M] [--area x] [--milestone] [--status todo] [--priority 2] [--depends A-1,A-2] [--links "#12"] [--tags a,b]
 //   prio <ID> <n> [<ID> <n> ...]    set priority (lower runs first)
 //   show <ID>                       print the card file
 //   stats                           milestone progress, velocity, ETA, who is blocked
@@ -15,7 +15,7 @@
 // More card commands (start, finish, outcome, status, ...) live in scripts/cmd/; `wf help` lists them.
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import {
-    ACTIVE, CARD_ID, DAY, LANDED, OVERNIGHT_BATCH, STATUSES, WIP, type Card, byPriority, claimable, config, fail, findCard,
+    ACTIVE, CARD_ID, DAY, LANDED, OVERNIGHT_BATCH, OVERNIGHT_EXCLUDE, STATUSES, WIP, type Card, byPriority, claimable, config, fail, findCard,
     idPrefix, milestoneLabel, readCards, root, taskBranch, teardown, today, unknownDepends, update, withLock, worktreeOf,
 } from './lib.ts';
 
@@ -124,11 +124,12 @@ switch (cmd) {
         break;
     }
     case 'new': {
-        const title = args[0] ?? fail('usage: new "<title>" [--size M] [--area x] [--milestone] [--status todo] [--priority 2] [--depends A-1,A-2] [--links "#12"]');
+        const title = args[0] ?? fail('usage: new "<title>" [--size M] [--area x] [--milestone] [--status todo] [--priority 2] [--depends A-1,A-2] [--links "#12"] [--tags a,b]');
         const status = typeof flags.status === 'string' ? flags.status : 'todo';
         if (!STATUSES.includes(status)) fail(`bad status ${status}`);
         const depends = list(flags.depends);
         const links = list(flags.links);
+        const tags = list(flags.tags);
         if (config.tracker?.requireLink && !links.some((l) => /^#\d+$/.test(l))) fail('tracker.requireLink is set: pass --links "#<issue>"');
         const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
         // Locked and re-read, so parallel sessions never mint the same id.
@@ -156,6 +157,7 @@ started:
 done:
 branch:
 links: [${links.map((l) => JSON.stringify(l)).join(', ')}]
+tags: [${tags.join(', ')}]
 ---
 
 ## Goal
@@ -174,7 +176,8 @@ links: [${links.map((l) => JSON.stringify(l)).join(', ')}]
         const dir = `${root}.workflow/queue`;
         mkdirSync(dir, { recursive: true });
         const queued = new Set(readdirSync(dir).map((f) => f.replace(/\.task$/, '')));
-        const picked = claimable(cards.filter((t) => !queued.has(t.id)), Number(args[0] ?? OVERNIGHT_BATCH), true);
+        const eligible = cards.filter((t) => !queued.has(t.id) && !t.tags.some((g) => OVERNIGHT_EXCLUDE.includes(g)));
+        const picked = claimable(eligible, Number(args[0] ?? OVERNIGHT_BATCH), true);
         const model = typeof flags.model === 'string' ? flags.model : (config.overnight?.model ?? 'opus');
         for (const t of picked) {
             writeFileSync(`${dir}/${t.id}.task`, `# model: ${model}\n${t.id}\n`);

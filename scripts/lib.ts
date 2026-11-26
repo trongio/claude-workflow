@@ -15,6 +15,7 @@ export type Card = {
     blocked: string;
     depends: string[];
     links: string[];
+    tags: string[];
     created?: string;
     started?: string;
     landed?: string;
@@ -34,7 +35,7 @@ export type Config = {
     timezone?: string;
     milestone?: { label?: string };
     board?: { title?: string; host?: string; port?: number };
-    overnight?: { model?: string; batch?: number };
+    overnight?: { model?: string; batch?: number; exclude?: string[] };
     finish?: { mode?: 'pr' | 'merge' | 'none'; squash?: boolean; autoMerge?: boolean; cleanup?: boolean };
     tracker?: { kind?: string; requireLink?: boolean; onMerge?: string };
     risk?: { high?: string[] };
@@ -80,6 +81,8 @@ export const WIP = Number(process.env.WF_WIP ?? config.wipLimit ?? 2);
 // One default for `wf queue` and `wf night`.
 export const OVERNIGHT_BATCH = Number(config.overnight?.batch ?? 8);
 export const BOARD_PORT = 8095;
+// Card tags the unattended runner never picks up.
+export const OVERNIGHT_EXCLUDE = config.overnight?.exclude ?? ['migration', 'deploy', 'hardware'];
 
 // Default id prefix from the repo name: initials of its words (claude-workflow -> CW), or its first 3 letters.
 export function idPrefix(): string {
@@ -141,6 +144,7 @@ export function parseCard(text: string, file: string, withBody = true): Card | n
         blocked: String(meta.blocked ?? ''),
         depends: Array.isArray(meta.depends) ? meta.depends.map(String) : [],
         links: Array.isArray(meta.links) ? meta.links.map(String) : [],
+        tags: Array.isArray(meta.tags) ? meta.tags.map(String) : [],
         created: str('created'),
         started: str('started'),
         landed: str('landed'),
@@ -173,7 +177,7 @@ export function readCards(opts: { bodies?: boolean } = {}): Card[] {
             } catch (err) {
                 cards.push({
                     id: name, title: `Unreadable: ${(err as Error).message}`, status: 'backlog', size: 'M', points: 0, area: '',
-                    priority: 9, milestone: false, blocked: '', depends: [], links: [], acceptance: { done: 0, total: 0 },
+                    priority: 9, milestone: false, blocked: '', depends: [], links: [], tags: [], acceptance: { done: 0, total: 0 },
                     body: '', file: `${dir}/${name}`, broken: true,
                 });
             }
@@ -189,6 +193,7 @@ export const findCard = (cards: Card[], id: string): Card =>
 
 export function render(value: unknown): string {
     if (Array.isArray(value)) return `[${value.join(', ')}]`;
+    if (value === '') return '""';
     if (typeof value === 'string' && (/[:#"[\]]/.test(value) || value !== value.trim())) return JSON.stringify(value);
     return String(value);
 }
@@ -448,7 +453,11 @@ export function readJson(path: string): unknown {
 export function teardown(dir: string | undefined, branch: string): { cleaned: string[]; error?: string } {
     const script = `. "$1/lib/common.sh"
 if declare -f wf_teardown >/dev/null; then wf_teardown "$2"; exit; fi
-if [ -n "$2" ] && [ -d "$2" ]; then git worktree remove "$2" || exit 1; fi
+if [ -n "$2" ] && [ -d "$2" ]; then
+    # Landed work may leave untracked build output; uncommitted edits to tracked files block removal.
+    if [ -n "$(git -C "$2" status --porcelain --untracked-files=no)" ]; then echo "$2 has uncommitted changes; left in place" >&2; exit 1; fi
+    git worktree remove --force "$2" || exit 1
+fi
 if git show-ref --verify --quiet "refs/heads/$3"; then git branch -D "$3" >/dev/null; fi`;
     const hadDir = !!dir && existsSync(dir);
     const hadBranch = git(['show-ref', '--verify', '--quiet', `refs/heads/${branch}`]).ok;
@@ -502,4 +511,21 @@ export function parseArgs(argv: string[], spec: Record<string, 'bool' | 'string'
         }
     }
     return { flags, args };
+}
+
+// ---------------------------------------------------------------- outcome
+
+// wf outcome writes the facts between these markers; the model writes the prose around them.
+export const AUTO_START = '<!-- wf:auto -->';
+export const AUTO_END = '<!-- /wf:auto -->';
+export const PROSE_HINT = '<!-- what shipped and why, decisions, follow-ups -->';
+
+// The Outcome's prose: everything but the generated block and the hint. Empty when only the skeleton is there.
+export function outcomeProse(body: string): string {
+    const s = section(body, 'Outcome');
+    if (s === null) return '';
+    const a = s.indexOf(AUTO_START);
+    const b = s.indexOf(AUTO_END);
+    const without = a >= 0 && b > a ? s.slice(0, a) + s.slice(b + AUTO_END.length) : s;
+    return without.replace(PROSE_HINT, '').trim();
 }
