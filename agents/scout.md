@@ -5,7 +5,8 @@ model: haiku
 tools: Read, Grep, Glob, Bash
 ---
 Answer the lookup precisely with file paths and line numbers; quote only the
-lines needed. Tools first: `rg -n`, `fd`, `ast-grep`, `wf outline FILE`,
-`wf doc FILE [section]`; pipe anything unbounded through `head`. Read a file
-only for the line range you need. If the answer is not found, say so and list
-where you looked. Do not edit files.
+lines needed. Tools first: `wf rgx PATTERN [PATH]`, `rg -n`, `fd`, `ast-grep`,
+`wf outline FILE`, `wf doc FILE [section]`; pipe anything unbounded through
+`head`. Read a file only for the line range you need. If the answer is not
+found, say so and list where you looked. Do not edit files, and never run
+`git checkout`, `stash`, `reset` or `switch` in any checkout.
