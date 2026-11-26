@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // wf-help: assemble a self-contained implementer brief from the card and its saved plan
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { config, fail, findCard, parseArgs, readCards, root, section, taskBranch } from '../lib.ts';
+import { config, fail, findCard, parseArgs, plural, readCards, root, section, taskBranch } from '../lib.ts';
 
 const HELP = `Usage: wf brief ID --stream N [--print]
 
@@ -61,4 +61,4 @@ mkdirSync(`${root}.workflow/briefs`, { recursive: true });
 const out = `${root}.workflow/briefs/${card.id}-s${n}.md`;
 writeFileSync(out, brief);
 if (flags.print) console.log(brief);
-console.log(`brief ${out} (${brief.split('\n').length} lines)`);
+console.log(`brief ${out} (${plural(brief.split('\n').length, 'line')})`);

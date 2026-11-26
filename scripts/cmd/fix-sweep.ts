@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // wf-help: cluster recent fix commits by scope and keyword (recurring defect classes)
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { git, parseArgs, root } from '../lib.ts';
+import { git, parseArgs, plural, root } from '../lib.ts';
 
 const HELP = `Usage: wf fix-sweep [--since DATE] [--top N] [--json]
 
@@ -41,12 +41,12 @@ mkdirSync(`${root}.workflow`, { recursive: true });
 const detail = `${root}.workflow/fix-sweep.md`;
 const sectionOf = (title: string, list: [string, string[]][]) =>
     `## ${title}\n\n${list.map(([k, v]) => `### ${k} (${v.length})\n\n${v.map((c) => `- ${c}`).join('\n')}`).join('\n\n')}\n`;
-writeFileSync(detail, `# Fix sweep since ${since}\n\n${fixes.length} fix commits of ${log.length}.\n\n${sectionOf('By scope', rank(scopes))}\n${sectionOf('By keyword', topWords)}`);
+writeFileSync(detail, `# Fix sweep since ${since}\n\n${plural(fixes.length, 'fix commit')} of ${log.length}.\n\n${sectionOf('By scope', rank(scopes))}\n${sectionOf('By keyword', topWords)}`);
 
 if (flags.json) {
     console.log(JSON.stringify({ since, fixes: fixes.length, commits: log.length, scopes: topScopes.map(([k, v]) => [k, v.length]), keywords: topWords.map(([k, v]) => [k, v.length]), detail }));
 } else {
-    console.log(`${fixes.length} fix commits of ${log.length} since ${since}`);
+    console.log(`${plural(fixes.length, 'fix commit')} of ${log.length} since ${since}`);
     const pad = Math.max(8, ...topScopes.map(([k]) => k.length), ...topWords.map(([k]) => k.length));
     const rows = Math.max(topScopes.length, topWords.length);
     if (rows) console.log(`${'scope'.padEnd(pad)}    n  ${'keyword'.padEnd(pad)}    n`);

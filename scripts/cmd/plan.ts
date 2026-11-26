@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join } from 'node:path';
 import { baseBranch, detect, haveCmd, missingTools, type Detection } from './detect.ts';
 import { table, versions } from './versions.ts';
-import { headerHelp, idPrefix, prefixFrom, readCards, root as mainRoot, today } from '../lib.ts';
+import { headerHelp, idPrefix, plural, prefixFrom, readCards, root as mainRoot, today } from '../lib.ts';
 
 const PLUGIN = join(dirname(import.meta.path), '../..');
 const T = (p: string) => join(PLUGIN, 'templates', p);
@@ -403,7 +403,7 @@ function status(): void {
     const phases: [string, boolean, string][] = [
         ['detect', existsSync(join(PLAN, 'detect.json')), 'wf detect --save'],
         ['interview', answered === all.length, `${answered}/${all.length} answered; wf plan questions`],
-        ['research', research.length >= 2, `${research.length} notes in .workflow/plan/research/`],
+        ['research', research.length >= 2, `${plural(research.length, 'note')} in .workflow/plan/research/`],
         ['decide', existsSync(join(PLAN, 'options.md')), '.workflow/plan/options.md'],
         ['scaffold', !!b.answers['decision.stack'] && existsSync(join(root, 'docs/STACK.md')), 'wf plan scaffold --stack ID --ui ID'],
         ['tune', b.answers['phase.tuned'] === true, 'edit <!-- tune --> blocks, then wf plan set phase.tuned true'],
