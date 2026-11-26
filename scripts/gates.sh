@@ -22,6 +22,9 @@
 #                Gates with inner: false (full suites) run only here or with --all.
 #   --last       reprint the previous table if the tree is unchanged.
 #   --json       print .workflow/gates-last.json (one line) instead of the table.
+#                `dirty` is true when the tree had changes outside .workflow/
+#                and tasks/; --release then prints "dirty tree: this run
+#                proves no commit" (it still runs).
 #                Each result has a `reason` ("" when the gate ran, else e.g.
 #                "not in release", "release only", "no matching changes",
 #                "pending", "not selected").
@@ -175,8 +178,12 @@ trap 'on_signal 129' HUP
 GIT_OPTIONAL_LOCKS=0 git -c core.quotepath=off status --porcelain=v1 -z --untracked-files=all --no-renames 2>/dev/null |
     tr '\0' '\n' | grep -v '^.. \.workflow/' >"$tmp/status" || true
 cut -c4- "$tmp/status" >"$tmp/dirty"
+# Dirty: changes outside .workflow/ and tasks/ (a run then proves no commit).
+dirty=false
+grep -qv '^.. tasks/' "$tmp/status" && dirty=true
+dirty_note="dirty tree: this run proves no commit"
 {
-    [ -n "$base" ] && git -c core.quotepath=off diff --name-only "$base" -- 2>/dev/null
+    [ -n "$base" ] && git -c core.quotepath=off diff --name-only --no-renames "$base" -- 2>/dev/null
     grep '^?? ' "$tmp/status" | cut -c4-
 } | grep -v '^\.workflow/' | sort -u >"$tmp/changed" || true
 export WF_BASE="$base" WF_CHANGED="$tmp/changed"
@@ -212,37 +219,16 @@ if [ "$last" = 1 ] && [ -f "$state/gates-last.txt" ] && [ -f "$last_json" ]; the
     echo "gates: tree changed since the last run, running" >&2
 fi
 
-# timed SECS LOG NAME DIR CMD: run CMD in DIR in its own process group (pgids
-# in $tmp/pg.NAME for the signal trap), output to LOG. A watchdog TERMs then
-# KILLs the group after SECS; the return code is then 124. Needs set -m.
-timed() {
-    local secs="$1" log="$2" name="$3" wdir="$4" cmd="$5" pid wd rc
-    rm -f "$tmp/timeout.$name"
-    (cd "$wdir" && exec bash -c "$cmd") >"$log" 2>&1 </dev/null &
-    pid=$!
-    echo "$pid" >"$tmp/pg.$name"
-    (
-        sleep "$secs"
-        touch "$tmp/timeout.$name"
-        kill -TERM -- "-$pid"
-        sleep 5
-        kill -KILL -- "-$pid"
-    ) >/dev/null 2>&1 &
-    wd=$!
-    echo "$wd" >>"$tmp/pg.$name"
-    wait "$pid"
-    rc=$?
-    kill -- "-$wd" 2>/dev/null
-    wait "$wd" 2>/dev/null
-    [ -f "$tmp/timeout.$name" ] && rc=124
-    return "$rc"
-}
+# timed SECS LOG NAME DIR CMD: wf_timed with the pgids in $tmp/pg.NAME for
+# the signal trap. Needs set -m.
+timed() { wf_timed "$1" "$2" "$4" "$5" "$tmp/pg.$3"; }
 
 started_at="$(date +%s)"
 log_release() { if [ "$release" = 1 ]; then printf '%s\n' "$*" >>"$root/$release_log"; fi; }
 if [ "$release" = 1 ]; then
     mkdir -p "$(dirname "$root/$release_log")"
     log_release "=== release $(date '+%F %T') sha $head_sha"
+    [ "$dirty" = false ] || log_release "$dirty_note"
 fi
 
 # A project release command replaces the gate list.
@@ -262,12 +248,14 @@ if [ "$release" = 1 ] && [ -n "$release_cmd" ]; then
     [ "$rc" = 124 ] && status=TIMEOUT note="killed after ${tmo:-$release_tmo}s"
     build_listing
     jq -n --arg sha "$head_sha" --arg tree "$(tree_hash)" --arg base "$base" --arg st "$status" \
-        --argjson s "$secs" --argjson rc "$rc" \
-        '{sha: $sha, tree: $tree, base: $base, release: true, exit: (if $rc == 0 then 0 else 1 end),
+        --argjson s "$secs" --argjson rc "$rc" --argjson dirty "$dirty" \
+        '{sha: $sha, tree: $tree, base: $base, release: true, dirty: $dirty, exit: (if $rc == 0 then 0 else 1 end),
           results: [{name: "release", status: $st, seconds: $s, cached: false, rerun: 0, reason: ""}]}' >"$last_json"
     printf 'release | %s | %ss | %s | log %s\n' "$status" "$secs" "$note" "$release_log" >"$state/gates-last.txt"
+    [ "$dirty" = false ] || echo "$dirty_note" >>"$state/gates-last.txt"
     if [ "$json" = 1 ]; then
         jq -c . "$last_json"
+        [ "$dirty" = false ] || echo "$dirty_note" >&2
     else
         cat "$state/gates-last.txt"
         [ "$rc" = 0 ] || tail -n "$tail_lines" "$logdir/release.log"
@@ -517,6 +505,7 @@ summary="$npass passed, ${#red[@]} red"
 if [ "${#unproven[@]}" -gt 0 ]; then summary="$summary; not proven: $(printf '%s ' "${unproven[@]}")"; fi
 if [ -n "$mem_note" ]; then summary="$summary; $mem_note"; fi
 printf '%s\n' "${summary% }" >>"$tmp/table"
+[ "$release" = 0 ] || [ "$dirty" = false ] || echo "$dirty_note" >>"$tmp/table"
 esc="$(printf '\033')"
 for n in "${red[@]}"; do
     printf '\n--- %s (last %s lines, full: .workflow/gates/%s.log) ---\n' "$n" "$tail_lines" "$n" >>"$tmp/table"
@@ -530,9 +519,14 @@ code=0
 log_release "exit $code after $(($(date +%s) - started_at))s sha $head_sha"
 
 jq -Rn --arg sha "$head_sha" --arg tree "$tree" --arg base "$base" --argjson rel "$([ "$release" = 1 ] && echo true || echo false)" \
-    --argjson code "$code" '{sha: $sha, tree: $tree, base: $base, release: $rel, exit: $code,
+    --argjson code "$code" --argjson dirty "$dirty" '{sha: $sha, tree: $tree, base: $base, release: $rel, dirty: $dirty, exit: $code,
       results: [inputs | split("\t") | {name: .[0], status: .[1], seconds: (.[2] | tonumber),
         cached: (.[3] == "true"), rerun: (.[4] | tonumber), reason: (.[5] // "")}]}' <"$tmp/rows" >"$last_json"
 cp "$tmp/table" "$state/gates-last.txt"
-if [ "$json" = 1 ]; then jq -c . "$last_json"; else cat "$tmp/table"; fi
+if [ "$json" = 1 ]; then
+    jq -c . "$last_json"
+    [ "$release" = 0 ] || [ "$dirty" = false ] || echo "$dirty_note" >&2
+else
+    cat "$tmp/table"
+fi
 exit "$code"

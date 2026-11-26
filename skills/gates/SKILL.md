@@ -18,7 +18,10 @@ Two modes:
   `gatesJobs`). Fast, and never proof that the change can land.
 - `wf gates --release` is the full gate: every gate with `release` not false,
   uncached, or the project's `release.cmd`. Only this table authorizes
-  `wf finish`.
+  `wf finish`, and only when it ran on a clean tree at the tip being landed:
+  a run with uncommitted changes (outside `.workflow/` and `tasks/`) prints
+  "dirty tree: this run proves no commit" and records `dirty: true`. Commit,
+  then run it again.
 
 Reading the table:
 - A subset of gates is not green. `wf gates` passing says nothing about the
@@ -33,7 +36,7 @@ of context. Use it instead of reading the log. `wf gates --last` reprints the
 previous table when nothing changed. `--fix` runs each gate's `fix` command
 (formatters) first, under the gate's timeout; `--only a,b` runs the named
 gates (an unknown name is an error, not a silent skip); `--json` for scripts:
-one line, every result with a `reason` (empty when the gate ran, else "not in
+one line with `dirty`, every result with a `reason` (empty when the gate ran, else "not in
 release", "release only", "no matching changes", "pending" or "not
 selected"). Only a SKIP with reason "not in release" is acceptable in a
 release result. A failing gate shows at most 20 lines of its log (the
@@ -48,4 +51,5 @@ multi-step edit). Reviewers never do: a run overwrites
 Paste the table as-is. Never type gate commands by hand, and never "fix" a red
 gate with an ignore, a baseline entry or a skipped test. To add or change a
 gate, edit `gates` in `.claude/workflow.json` (`wf gates --list` shows what
-would run, `wf doctor` checks the tools exist).
+would run, `wf doctor` checks the tools exist: a gate's `requires` list, else
+the tool derived from `cmd` past wrappers such as `npx`, `!` and `test`).
