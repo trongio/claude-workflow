@@ -222,6 +222,18 @@ git checkout -q -b side
 git checkout -q main
 git branch -qD side
 
+# A failing commit hook leaves the card edits unstaged, never staged for the next commit.
+mkdir -p "$dir-hooks"
+printf '#!/bin/sh\necho "hook said no"\nexit 1\n' >"$dir-hooks/pre-commit"
+chmod +x "$dir-hooks/pre-commit"
+git config core.hooksPath "$dir-hooks"
+"$wf" note WF-3 "hook check" >/dev/null
+[ "$(rc_of "$wf" cards-commit -m "docs(tasks): hooked")" = 1 ] && grep -q 'hook said no' "$dir-out" &&
+    git diff --cached --quiet && [ -n "$(git status --porcelain -- tasks)" ] &&
+    ok "cards-commit: a failing hook exits 1 with its output, card edits unstaged" || die "cards hook: $(cat "$dir-out"); $(git status --short)"
+git config --unset core.hooksPath
+"$wf" cards-commit -m "docs(tasks): hook check" >/dev/null
+
 # ---- 10: stale lock takeover has one winner ---------------------------------
 common="$(git rev-parse --path-format=absolute --git-common-dir)"
 : >"$dir-lock.log"
@@ -380,6 +392,24 @@ git worktree remove --force "$dir-sq"
 "$wf" merge "wf/$sq" --squash | grep -q 'squashed' && [ "$(git log -1 --format=%s)" = "Squash card ($sq)" ] &&
     [ "$(git log -1 --format=%P | wc -w)" = 1 ] && ok "wt-merge --squash: one commit named after the card" || die "squash: $(git log -3 --oneline)"
 git branch -qD "wf/$sq"
+# --sha, an empty net diff, headless refusal.
+git checkout -q -b wf/SH main
+echo 1 >src/sh.txt && git add -A && git commit -qm "feat: sh"
+git checkout -q -b wf/EM main
+echo 1 >src/em.txt && git add -A && git commit -qm "feat: em" && git rm -q src/em.txt && git commit -qm "revert: em"
+git checkout -q main
+head="$(git rev-parse HEAD)"
+[ "$(rc_of "$wf" merge wf/SH --sha "$head")" = 2 ] && grep -q 'not the gated' "$dir-out" && [ "$(git rev-parse HEAD)" = "$head" ] &&
+    ok "wt-merge --sha: refuses (exit 2) when the branch tip is not the gated sha" || die "sha mismatch: $(cat "$dir-out")"
+for flag in "" --squash; do
+    [ "$(rc_of "$wf" merge wf/EM ${flag:+"$flag"})" = 5 ] && grep -q 'nothing to merge' "$dir-out" && [ "$(git rev-parse HEAD)" = "$head" ] &&
+        [ -z "$(git status --porcelain --untracked-files=no)" ] && ok "wt-merge ${flag:-(no-ff)}: an empty net diff exits 5, main untouched" || die "empty $flag: $(cat "$dir-out"); $(git status --short)"
+done
+[ "$(WF_HEADLESS=1 rc_of "$wf" merge wf/SH)" = 2 ] && grep -q 'refused in a headless session' "$dir-out" && [ "$(git rev-parse HEAD)" = "$head" ] &&
+    ok "wt-merge: refused in a headless session" || die "headless: $(cat "$dir-out")"
+[ "$(WF_HEADLESS=1 WF_FROM_FINISH=1 rc_of "$wf" merge wf/EM)" = 5 ] && ok "wt-merge: WF_FROM_FINISH=1 passes the headless check" || die "from finish: $(cat "$dir-out")"
+"$wf" merge wf/SH --sha "$(git rev-parse wf/SH)" | grep -qx 'merged wf/SH (1 commit, 1 file)' && ok "wt-merge --sha: merges the gated tip; counts pluralized" || die "sha merge: $(git log -2 --oneline)"
+git branch -qD wf/SH wf/EM
 
 # ---- 17: runner lock takeover, session sweep, WF_HEADLESS -------------------
 rm -f .workflow/queue/*.task
@@ -455,5 +485,30 @@ touch "$(git rev-parse --git-common-dir)/refs/heads/wf/A-LOCK.lock"
 rm -f "$(git rev-parse --git-common-dir)/refs/heads/wf/A-LOCK.lock"
 git branch -qD wf/A-LOCK
 
+# ---- 19: the session sweep spares claude processes and their children -------
+mkdir -p "$dir-sweep"
+cat >"$stub/claude" <<EOF
+#!/bin/sh
+sleep 1655 &
+wait
+EOF
+chmod +x "$stub/claude"
+cl="$(detach "$dir-sweep" "$stub/claude")"
+plain="$(detach "$dir-sweep" sleep 1656)"
+bg_pids+=("$cl" "$plain")
+wait_for 'sleep 1655' || die "claude child never started"
+mcp="$(pgrep -fx 'sleep 1655')"
+bg_pids+=("$mcp")
+bash -c '. "$1/scripts/lib/common.sh"; cd /; wf_sweep "$2"' _ "$repo" "$dir-sweep" >"$dir-out" 2>&1
+sleep 0.2
+kill -0 "$cl" && kill -0 "$mcp" && gone "$plain" &&
+    ok "wf_sweep: a claude process and its children in the worktree survive, others stop" || die "sweep: $(cat "$dir-out")"
+kill "$mcp" "$cl" 2>/dev/null || true
+
+# ---- 20: bash older than 4.4 is refused -------------------------------------
+bash -c '. "$1/scripts/lib/common.sh"; ! wf_bash_ok 4 3 && ! wf_bash_ok 3 2 && wf_bash_ok 4 4 && wf_bash_ok 5 0' _ "$repo" &&
+    grep -q 'bash 4.4+ required.*brew install bash' "$repo/scripts/lib/common.sh" && ok "common.sh: requires bash 4.4" || die "bash version check"
+
+rm -rf "$dir-sweep" "$dir-hooks"
 rm -f "$dir-out" "$dir-seen" "$dir-run.log" "$dir-lock.log" "$mark" "$dir-gh.json" "$dir-headless" "$dir-pg" "$dir-detach.pid"
 printf '\n%d safety checks passed (scratch: %s)\n' "$pass" "$dir"

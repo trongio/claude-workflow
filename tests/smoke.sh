@@ -180,6 +180,11 @@ for c in claim queue night move; do timeout 20 "$wf" "$c" --help >/dev/null 2>&1
 [ "$(snap)" = "$before" ] && [ ! -d .workflow/.runner.lock ] && ok "--help never runs the command (no card moved, no queue file, no runner)" || die "--help had side effects"
 "$wf" prune --help | grep -q 'set -e' && die "prune --help leaks code"
 "$wf" gates --help | grep -q 'Usage: wf gates' && ! "$wf" gates --help | grep -q 'gates.sh' && ok "help prints only the header comment, with the wf name" || die "gates --help"
+missing_cmds=""
+while read -r c; do
+    "$wf" help | sed -n '1,14p' | grep -qE "(^| )(wf )?$c( |$)" || missing_cmds="$missing_cmds $c"
+done < <(sed -nE "s/^    case '([a-z-]+)':.*/\1/p" "$repo/scripts/wf.ts")
+[ -z "$missing_cmds" ] && ok "wf help header lists every card command (approve too)" || die "help header misses:$missing_cmds"
 
 printf '\n%d checks passed (scratch: %s)\n' "$pass" "$dir"
 

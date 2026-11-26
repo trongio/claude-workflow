@@ -111,10 +111,29 @@ git merge -q --no-ff -m "merge: m" feat/m
 "$wf" gates | grep -qE '^src +\| PASS' && ok "gates: post-merge diffs against the first parent" || die "post-merge"
 "$wf" gates --json | jq -e --arg p "$(git rev-parse HEAD^1)" '.base == $p' >/dev/null && ok "gates --json: base is HEAD^1" || die "json base"
 
+# A rename counts on both sides: a gate watching the old directory still runs.
+git checkout -q -b feat/r
+mkdir -p lib
+git mv src/m.ts lib/m.ts
+git commit -qm "refactor: move m"
+"$wf" gates --base main --only src | grep -qE '^src +\| PASS' && ok "gates: a rename out of a when path still selects the gate" || die "rename: $("$wf" gates --base main --list)"
+git checkout -q main
+git branch -qD feat/r
+
 # Release: log has sha and exit code; refuses outside the root.
 "$wf" gates --release >/dev/null || die "release run"
 grep -q "sha $(git rev-parse HEAD)" .workflow/release.log && grep -qE '^exit 0 after' .workflow/release.log &&
     ok "gates --release: log has sha and exit code" || die "release log"
+jq -e '.dirty == false' .workflow/gates-last.json >/dev/null && ok "gates --release: a clean tree records dirty false" || die "dirty clean: $(cat .workflow/gates-last.json)"
+echo 'export const d = 1;' >src/d.ts
+out="$("$wf" gates --release 2>&1)" || die "dirty release run: $out"
+echo "$out" | grep -qx 'dirty tree: this run proves no commit' && jq -e '.dirty == true' .workflow/gates-last.json >/dev/null &&
+    grep -q 'dirty tree: this run proves no commit' .workflow/release.log && ok "gates --release: a dirty tree says it proves no commit" || die "dirty: $out"
+"$wf" gates --release --json 2>&1 >/dev/null | grep -q 'dirty tree' && ok "gates --release --json: the dirty note goes to stderr" || die "dirty json"
+rm src/d.ts
+touch tasks/scratch.tmp
+"$wf" gates --json | jq -e '.dirty == false' >/dev/null && ok "gates: changes under tasks/ do not make the tree dirty" || die "tasks dirty"
+rm tasks/scratch.tmp
 (cd src && "$wf" gates --release 2>&1 || true) | grep -q 'must run from the worktree root' && ok "gates --release: refuses outside root" || die "release cwd"
 cfg '.release = {"cmd": "echo ci-ran; exit 4"}'
 "$wf" gates --release >/dev/null 2>&1 && die "release cmd failure must exit 1"
@@ -158,6 +177,16 @@ grep -q "^DB_DATABASE='app_wf_1'" "$wt/.workflow/env" && grep -qE "^APP_PORT='81
 ledger="$(git rev-parse --path-format=absolute --git-common-dir)/workflow-resources.json"
 jq -e --arg d "$wt" '.worktrees[$d] | .branch == "wf/WF-1" and (.db == ["app_wf_1"]) and (.port >= 8100)' "$ledger" >/dev/null && ok "ledger: worktree, branch, db, port recorded" || die "ledger: $(cat "$ledger")"
 
+# wt-init: a setup command that hangs is killed at worktree.setupTimeout.
+git worktree add -q -b wt-hang "$dir-wth" main
+(cd "$dir-wth" && cfg '.worktree.setup = ["sleep 1477"] | .worktree.setupTimeout = 2')
+r=0
+timeout 30 "$wf" wt-init "$dir-wth" >/dev/null 2>"$dir-init.err" || r=$?
+[ "$r" = 124 ] && grep -q 'killed after 2s' "$dir-init.err" && ! pgrep -fx 'sleep 1477' >/dev/null &&
+    ok "wt-init: a setup command past setupTimeout is killed, exit 124" || die "setup timeout: rc $r $(cat "$dir-init.err")"
+git worktree remove --force "$dir-wth"
+git branch -qD wt-hang
+
 # Preview: own port, recorded pid, stopped by down.
 if command -v python3 >/dev/null; then
     cfg '.preview = {"cmd": "exec python3 -m http.server {port} --bind 127.0.0.1"}'
@@ -198,6 +227,31 @@ git rev-parse -q --verify refs/heads/wf/WF-1 >/dev/null && ok "move done: unmerg
 mkdir -p "$(dirname "$ledger")/workflow-x.lock" && echo 999999 >"$(dirname "$ledger")/workflow-x.lock/pid"
 "$wf" doctor | grep -q 'stale lock' && ok "doctor: stale lock" || die "doctor lock"
 rm -rf "$(dirname "$ledger")/workflow-x.lock"
+
+# Doctor: gate tools from `requires`, else derived past wrappers.
+cp .claude/workflow.json "$dir-cfg.bak"
+stubs="$dir-doctor-bin"
+mkdir -p "$stubs" vendor/bin node_modules/.bin
+for t in rg_wf vitest_wf; do printf '#!/bin/sh\n' >"$stubs/$t" && chmod +x "$stubs/$t"; done
+printf '#!/bin/sh\n' >vendor/bin/pest_wf && chmod +x vendor/bin/pest_wf
+# shellcheck disable=SC2016 # a literal $( in the gate command
+cfg '.gates = [
+  {"name": "vt", "cmd": "CI=1 npx vitest_wf run"},
+  {"name": "vtmiss", "cmd": "npx vitest_none_wf run"},
+  {"name": "pest", "cmd": "./vendor/bin/pest_wf --parallel", "pending": true},
+  {"name": "neg", "cmd": "! rg_wf -n TODO src"},
+  {"name": "fmt", "cmd": "test -z \"$(gofmt_none_wf -l .)\"", "pending": true},
+  {"name": "req", "cmd": "make lint", "requires": ["req_none_wf", "git"]}]'
+out="$(PATH="$stubs:$PATH" "$wf" doctor 2>&1 || true)"
+! echo "$out" | grep -qE 'gate vt:|unknown key' && echo "$out" | grep -q 'FAIL gate vtmiss: vitest_none_wf is not installed' &&
+    ok "doctor: npx X checks X" || die "doctor npx: $out"
+echo "$out" | grep -q 'pending gate pest: pest_wf installed now; set pending false' && ok "doctor: ./vendor/bin/X is X" || die "doctor vendor: $out"
+! echo "$out" | grep -q 'gate neg:' && ok "doctor: ! X checks X" || die "doctor !: $out"
+echo "$out" | grep -q 'pending gate fmt: gofmt_none_wf not installed' && ok "doctor: test -z \"\$(X)\" checks X, not test" || die "doctor test: $out"
+echo "$out" | grep -q 'FAIL gate req: req_none_wf is not installed' && ! echo "$out" | grep -qE 'gate req: (git|make)' &&
+    ok "doctor: requires replaces the derived tool" || die "doctor requires: $out"
+mv "$dir-cfg.bak" .claude/workflow.json
+rm -rf "$stubs" vendor node_modules/.bin
 
 # test-affected with a map.
 mkdir -p tests
