@@ -22,7 +22,7 @@ for a in "$@"; do
     case "$a" in
     --dry) dry=1 ;;
     -h | --help)
-        sed -n '4,12p' "$0" | sed 's/^# \{0,1\}//'
+        wf_help "$0"
         exit 0
         ;;
     -*)

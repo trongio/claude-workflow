@@ -12,7 +12,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/common.sh
 . "$here/lib/common.sh"
 
-usage() { sed -n '4,8p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { wf_help "${BASH_SOURCE[0]}"; }
 msg="" want=""
 while [ $# -gt 0 ]; do
     case "$1" in

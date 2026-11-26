@@ -14,6 +14,13 @@
 # ``` fences are ignored.
 set -euo pipefail
 
+case "${1:-}" in -h | --help)
+    # shellcheck source=lib/common.sh
+    . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/common.sh"
+    wf_help "$0"
+    exit 0
+    ;;
+esac
 file="${1:?usage: wf doc FILE [SECTION-REGEX | --depth N]}"
 shift
 regex=""

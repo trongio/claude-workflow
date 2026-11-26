@@ -10,7 +10,9 @@
 # lines are cut at 200 columns. Exit status follows rg: 1 when nothing matched.
 set -euo pipefail
 
-usage() { sed -n '4,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+# shellcheck source=../lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/common.sh"
+usage() { wf_help "${BASH_SOURCE[0]}"; }
 case "${1:-}" in
 '' | -h | --help)
     usage

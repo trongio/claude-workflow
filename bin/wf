@@ -4,7 +4,7 @@
 #
 #   card commands     list next claim move new prio show stats queue root   (bun scripts/wf.ts)
 #   wf board          live board on http://127.0.0.1:8095
-#   wf gates [...]    quality gates (gates.sh --help)
+#   wf gates [...]    quality gates (wf gates --help)
 #   wf merge BRANCH   merge a branch into the base branch under a lock
 #   wf wt-init [DIR]  make a worktree runnable
 #   wf review-diff    compact diff for reviewers
@@ -12,6 +12,7 @@
 #   wf outline FILE   symbol outline of source files
 #   wf init [--write]   detect the stack, suggest or write .claude/workflow.json + tasks/
 #   wf night [N]      queue N cards and run the overnight runner;  wf run: runner only
+#   wf CMD --help     help for one command (never runs it)
 set -euo pipefail
 
 src="${BASH_SOURCE[0]}"
@@ -32,6 +33,41 @@ runtime() {
 
 cmd="${1:-list}"
 [ $# -gt 0 ] && shift
+
+# -h/--help anywhere in the arguments prints help and never runs the command.
+for a in "$@"; do
+    case "$a" in -h | --help) ;; *) continue ;; esac
+    script=""
+    case "$cmd" in
+    gates) script=gates.sh ;;
+    merge) script=wt-merge.sh ;;
+    wt-init) script=wt-init.sh ;;
+    review-diff) script=review-diff.sh ;;
+    doc) script=doc.sh ;;
+    outline) script=outline.sh ;;
+    run | night) script=overnight-runner.sh ;;
+    init) script=init.ts ;;
+    board) script=board/server.ts ;;
+    cards-commit) script=cmd/cards-commit.sh ;;
+    help | -h | --help) break ;;
+    esac
+    if [ -n "$script" ]; then
+        # shellcheck source=../scripts/lib/common.sh
+        . "$scripts/lib/common.sh"
+        wf_help "$scripts/$script"
+        exit 0
+    fi
+    if [ -x "$scripts/cmd/$cmd.sh" ]; then exec "$scripts/cmd/$cmd.sh" --help; fi
+    if [ -f "$scripts/cmd/$cmd.ts" ]; then
+        command -v bun >/dev/null || {
+            echo "wf: bun is required (https://bun.sh)" >&2
+            exit 2
+        }
+        exec bun "$scripts/cmd/$cmd.ts" --help
+    fi
+    runtime help "$cmd"
+done
+
 case "$cmd" in
 gates) exec "$scripts/gates.sh" "$@" ;;
 merge) exec "$scripts/wt-merge.sh" "$@" ;;
@@ -52,7 +88,7 @@ night)
     exec "$scripts/overnight-runner.sh"
     ;;
 -h | --help | help)
-    sed -n '2,14p' "$src" | sed 's/^# \{0,1\}//'
+    sed -n '2,15p' "$src" | sed 's/^# \{0,1\}//'
     for f in "$scripts"/cmd/*; do
         [ -e "$f" ] || continue
         printf '  wf %-14s %s\n' "$(basename "${f%.*}")" "$(sed -nE 's@^(#|//) wf-help: @@p' "$f" | head -1)"
