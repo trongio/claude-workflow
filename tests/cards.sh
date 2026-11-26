@@ -402,7 +402,11 @@ newcard() {
     git add -A tasks && git commit -qm "chore(tasks): $id" -q
     echo "$id"
 }
-snapshot() { (cd "$dir" && find tasks .workflow -type f ! -path '.workflow/worktrees/*' -print0 2>/dev/null | sort -z | xargs -0 md5sum; git rev-parse HEAD; git worktree list) | md5sum; }
+snapshot() { (
+    cd "$dir" && find tasks .workflow -type f ! -path '.workflow/worktrees/*' -print0 2>/dev/null | sort -z | xargs -0 md5sum
+    git rev-parse HEAD
+    git worktree list
+) | md5sum; }
 
 # Every card command's --help prints help, exits 0 and changes nothing, wherever the flag sits.
 before="$(snapshot)"
@@ -457,10 +461,17 @@ set_config '.gates = [{"name": "ok", "cmd": "true", "when": ["*"]}]'
 id="$("$wf" new "Late" --links "#9" | cut -d' ' -f1)"
 criterion "$id" && git add -A tasks && git commit -qm "chore(tasks): $id" -q
 ready "$id" late.txt
+# shellcheck disable=SC2016 # $WF_CARD expands in the hook, not here
 set_config '.push = true | .tracker.onMerge = "echo late > .workflow/worktrees/$WF_CARD/late-wip.txt"'
 "$wf" finish "$id" --mode pr --no-cleanup >/dev/null 2>&1 || die "first pr finish (Late)"
 gh_merge "$(jq --arg b "wf/$id" '[.[] | select(.head == $b)][0].number' "$GH_STATE")"
+# The forge merge moved origin's main past the local one.
+git clone -q -b main "$dir.remote" "$dir.clone"
+git -C "$dir.clone" -c user.email=t@example.invalid -c user.name=test commit -q --allow-empty -m "forge merge"
+git -C "$dir.clone" push -q origin main
 expect "finish a merged PR while work appears in the worktree" "$wf" finish "$id" --mode pr
+grep -qx "pull main to pick up the merge: git -C $dir pull --rebase" "$dir.out" && ok "merged PR: says how to pull the base, does not pull" || die "pull hint: $(cat "$dir.out")"
+[ "$(git rev-parse main)" != "$(git -C "$dir.clone" rev-parse main)" ] || die "finish pulled main"
 grep -q "kept branch wf/$id: its tip" "$dir.out" && git show "wf/$id:late-wip.txt" >/dev/null 2>&1 && [ -n "$(git ls-remote origin "refs/heads/wf/$id")" ] &&
     [ "$(field "$id" status)" = verifying ] && ok "a wip commit past the merged head keeps the branch and its remote" || die "late work: $(cat "$dir.out")"
 set_config '.push = false | .tracker.onMerge = ""'
