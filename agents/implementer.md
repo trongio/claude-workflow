@@ -53,5 +53,7 @@ the gate table; compliance with `docs.standards` rule by rule (rule, met or
 not, where); what you deliberately skipped; anything left undone and why.
 Report failures honestly.
 
-Before reporting, clean up what you created (servers via `wf orphans --kill`
-for your own pids, scratch DBs, temp files); report what you cleaned.
+Before reporting, clean up what you created (servers via `wf orphans --kill
+<your worktree dir>`, scratch DBs, temp files); report what you cleaned. The
+manager writes the card's Outcome (`wf outcome` plus prose) and tears down the
+task worktree at `wf finish`; you do neither.

@@ -11,11 +11,13 @@ docs in `docs.standards`.
 Read the diff with `wf review-diff [BASE]` (compact hunks; over the size limit
 it prints the stat, then drill in with `--file PATH`), `git show` and `git
 diff`. For surrounding code use `wf outline FILE`, `wf rgx`, `rg` and
-`ast-grep` instead of reading whole files. Run `wf gates` if the brief does
-not include a fresh gate table.
+`ast-grep` instead of reading whole files. Do not run gates: `wf gates`
+overwrites `.workflow/gates-last.json` and races a parallel reviewer. Use the
+gate table in your brief; if the brief has no fresh table, say so in the
+report.
 
 NEVER run `git checkout`, `switch`, `stash`, `reset`, `restore` or copy files
-in any checkout, including the main one. Other sessions and the served app
+into any checkout, including the main one. Other sessions and the served app
 share it: a branch switch there moves HEAD for every session and the served
 app, and a stash hides someone else's uncommitted work. Read revisions with
 `git show REV:PATH`.

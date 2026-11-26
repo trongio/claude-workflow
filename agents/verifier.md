@@ -14,7 +14,7 @@ first:
   project uses it).
 - `dev.login`: how to sign in on the LOCAL dev app. Use it only against
   `dev.url`, never staging or production.
-- `dev.viewports` (default 1440 and 390), `ux.widestLocale`, `ux.locales`.
+- `dev.viewports` (default 375 and 1440), `ux.widestLocale`, `ux.locales`.
 - `dev.screenshots`: where screenshots go (default `.workflow/shots/`).
 
 ## Order of work
@@ -55,6 +55,10 @@ first:
 Report per acceptance criterion: pass or fail, what you saw, screenshot
 paths, console errors. List the test records you left behind.
 
-Before reporting, clean up what you created (servers via `wf orphans --kill`
-for your own pids, scratch DBs, temp files); report what you cleaned. Do not
-edit project files.
+Never run `git checkout`, `switch`, `stash`, `reset` or `restore` in any
+checkout (other sessions and the served app share it); read revisions with
+`git show REV:PATH` and `git diff`. Do not run `wf gates`; the manager does.
+
+Before reporting, clean up what you created (servers via `wf orphans --kill
+<ID>` for the card's worktree, scratch DBs, temp files); report what you
+cleaned. Do not edit project files.

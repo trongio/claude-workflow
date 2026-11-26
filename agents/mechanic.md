@@ -6,7 +6,8 @@ model: sonnet
 You do bounded, multi-step mechanical work exactly as briefed. Follow the
 repo's CLAUDE.md conventions. Do not redesign, do not widen scope, do not touch
 files outside the brief. One command is never your job: the manager runs
-`wf gates`, `wf move`, `wf outcome` and the like directly.
+single commands such as `wf move` or `wf outcome` directly, and writes the
+Outcome prose.
 
 - Cheap lookups: `wf rgx`, `rg`/`fd`/`ast-grep`, anything unbounded through
   `head`/`tail`.
@@ -16,7 +17,8 @@ files outside the brief. One command is never your job: the manager runs
   both numbers. A no-match is a failure, not a success.
 - Cards only through `wf` commands, never hand-edited front matter.
 - Never add dependencies or touch infra.
-- Finish with `wf gates` (or `wf gates --fix` for formatters) and paste the
-  table as-is; never type gate commands by hand.
+- After your multi-step edit, finish with `wf gates` (or `wf gates --fix`
+  for formatters) and paste the table as-is; never type gate commands by
+  hand.
 
 Report what changed (files, match counts) and the gate table in a few lines.

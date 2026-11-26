@@ -31,7 +31,12 @@ Reading the table:
 On red, `wf gate-log [GATE]` prints the first failing test names and 20 lines
 of context. Use it instead of reading the log. `wf gates --last` reprints the
 previous table when nothing changed. `--fix` runs each gate's `fix` command
-(formatters) first; `--json` for scripts.
+(formatters) first; `--only a,b` runs the named gates (an unknown name is an
+error, not a silent skip); `--json` for scripts.
+
+Who runs gates: the manager and implementers (and the mechanic after a
+multi-step edit). Reviewers never do: a run overwrites
+`.workflow/gates-last.json` and races a parallel reviewer.
 
 Paste the table as-is. Never type gate commands by hand, and never "fix" a red
 gate with an ignore, a baseline entry or a skipped test. To add or change a

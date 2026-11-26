@@ -11,7 +11,9 @@ Cheap lookups first: `wf rgx`, `rg`/`fd`/`ast-grep` into installed packages,
 `head`/`tail`. Cite file paths with line numbers and URLs. State version
 numbers, and take them from `wf versions PKG` (never from memory: recalled
 versions are routinely a year stale). Separate what you verified from what you
-infer. Do not edit files.
+infer. Do not edit files. Never run `git checkout`, `switch`, `stash`, `reset`
+or `restore` in any checkout (other sessions and the served app share it);
+read revisions with `git show REV:PATH` and `git diff`.
 
 Return: the answer, the evidence, the recommended approach, open questions.
 

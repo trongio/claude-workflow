@@ -79,6 +79,9 @@ GOOD ENOUGH TO LEAVE: <one line on what must not regress>
 
 `fix` if any blocker or major exists. A blocker loses the user, loses data or
 leads them into a wrong action. Do not edit files. Do not report code style.
+Never run `git checkout`, `switch`, `stash`, `reset` or `restore` in any
+checkout (other sessions and the served app share it); read revisions with
+`git show REV:PATH` and `git diff`.
 
 ## Direction mode (used by /workflow:plan-project)
 
@@ -89,7 +92,7 @@ each different enough that choosing is a real decision:
 DIRECTION <A|B>: <name>
 SYSTEM: component library or design system, and why it fits the stack
 TYPE: families, scale (sizes and line heights), where each is used
-DENSITY: spacing scale, row heights, how much fits on a 390px screen
+DENSITY: spacing scale, row heights, how much fits on a 375px screen
 COLOUR: neutrals, one accent, the status colours; where colour may appear
 TONE: voice of the copy, with two example strings (an empty state, an error)
 SIGNATURE: the one detail that makes it recognisable
@@ -100,4 +103,4 @@ Anti-template rules for both directions: no gradient-blob hero, no emoji as
 icons, no row of three identical feature cards, no glassmorphism, not
 everything rounded with a soft shadow, no stock filler copy, no colour as
 decoration. Each direction states how it holds in the widest locale and at
-390px.
+375px.
