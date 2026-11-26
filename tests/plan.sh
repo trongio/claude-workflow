@@ -189,7 +189,8 @@ for f in "$repo"/templates/stacks/*.json; do
     if [ "$ui" != native ]; then [ -s "$s/docs/UI-UX-STANDARDS.md" ] || die "scaffold $id: missing UI-UX-STANDARDS.md"; fi
     left="$(grep -rn '{{' "$s/docs" "$s/CLAUDE.md" "$s/.claude/workflow.json" || true)"
     [ -z "$left" ] || die "scaffold $id: unrendered placeholders: $left"
-    jq -e --arg id "$id" '(.gates | length > 0) and ([.gates[] | has("when") and (has("requires") | not)] | all) and .stack.id == $id and (.docs.standards | length > 0)' "$s/.claude/workflow.json" >/dev/null || die "scaffold $id: workflow.json"
+    jq -e --arg id "$id" --slurpfile st "$f" '(.gates | length > 0) and ([.gates[] | has("when")] | all) and .stack.id == $id and (.docs.standards | length > 0)
+        and ([.gates[] | select(.name as $n | $st[0].gates[] | select(.name == $n and has("requires"))) | has("requires")] | all)' "$s/.claude/workflow.json" >/dev/null || die "scaffold $id: workflow.json"
     jq -e '[.gates[] | select(.release == false)] | length >= 1' "$s/.claude/workflow.json" >/dev/null || die "scaffold $id: no affected-only inner test gate"
     grep -q 'versions:start' "$s/docs/STACK.md" || die "scaffold $id: no version table"
     if grep -n $'\xe2\x80\x94' "$s/docs/"*.md "$s/CLAUDE.md"; then die "scaffold $id: em dash in output"; fi
@@ -200,6 +201,29 @@ grep -qx '.workflow/' "$dir/stack-go-api/.gitignore" && ok "scaffold: .workflow/
 jq -e '.gates[] | select(.name == "build") | .when | index("vite.config.*") == null' "$dir/stack-next-ts/.claude/workflow.json" >/dev/null &&
     jq -e '[.gates[].when[]] | index("vite.config.*") != null' "$dir/stack-laravel-inertia-react/.claude/workflow.json" >/dev/null &&
     ok "scaffold: no vite.config.* on Next's build gate, kept where vite ships" || die "scaffold: framework config globs"
+
+# Non-UI stacks get no UI-only rules; the dupes rule matches whether the stack has the gate.
+for id in go-api rust-axum node-hono-api; do
+    if grep -nE 'sr-only|aria-label|viewport|375 px|visual check|UI/UX standards' "$dir/stack-$id/CLAUDE.md" "$dir/stack-$id/docs/"*.md; then die "scaffold $id: UI-only rule in a non-UI stack"; fi
+done
+ok "scaffold: go-api, rust-axum, node-hono-api docs carry no sr-only, aria or viewport rules"
+l="$dir/stack-laravel-inertia-react"
+grep -q 'before every merge (release gate)' "$l/docs/ENGINEERING-STANDARDS.md" && ! grep -q 'a stack with no' "$l/docs/ENGINEERING-STANDARDS.md" &&
+    grep -q 'not yet: copy-paste gate' "$dir/stack-go-api/docs/ENGINEERING-STANDARDS.md" && ! grep -q 'ci: dupes' "$dir/stack-go-api/docs/ENGINEERING-STANDARDS.md" &&
+    ! grep -rq 'i18n review' "$l/docs" && ok "scaffold: the dupes rule renders per stack, no undefined tags" || die "scaffold: dupes rule text"
+jq -e '(.risk.high | index("bootstrap/app.php") != null and index("app/Policies/") != null) and ([.risk.high[] | select(test("AuthServiceProvider"))] | length == 0)' "$l/.claude/workflow.json" >/dev/null &&
+    ok "scaffold: Laravel risk.high has bootstrap/app.php and app/Policies/, no AuthServiceProvider" || die "laravel risk.high: $(jq -c .risk.high "$l/.claude/workflow.json")"
+
+# The tokens gate fails closed when its directory is missing and catches palette utilities (shadcn-tailwind).
+tok="$(jq -r '.gates[] | select(.name == "tokens") | .cmd' "$l/.claude/workflow.json")"
+t="$dir/tokens"
+mkdir -p "$t"
+(cd "$t" && ! bash -c "$tok" >/dev/null 2>&1) && ok "tokens gate: a missing source dir fails" || die "tokens gate passed with no resources/js"
+mkdir -p "$t/resources/js"
+echo 'export const A = () => <div className="bg-background p-4" />;' >"$t/resources/js/a.tsx"
+(cd "$t" && bash -c "$tok" >/dev/null 2>&1) && ok "tokens gate: semantic utilities pass" || die "tokens gate failed a clean file"
+echo 'export const B = () => <div className="bg-red-500" />;' >"$t/resources/js/b.tsx"
+(cd "$t" && ! bash -c "$tok" >/dev/null 2>&1) && ok "tokens gate: a palette utility fails" || die "tokens gate missed bg-red-500"
 
 # unpend clears pending only for gates whose tools now exist.
 u="$dir/stack-laravel-inertia-react"

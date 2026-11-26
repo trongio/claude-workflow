@@ -1,7 +1,7 @@
 ## UI kit rules: Mantine
 
 ### Tokens
-- The theme (`createTheme`) is the only place for colours, radius, spacing, font sizes and breakpoints; components use theme keys (`c="dimmed"`, `p="md"`, `radius="sm"`, `var(--mantine-color-...)`), never hex or raw px. [ci: tokens]
+- The theme (`createTheme`) is the only place for colours, radius, spacing, font sizes and breakpoints; components use theme keys (`c="dimmed"`, `p="md"`, `radius="sm"`, `var(--mantine-color-...)`), never hex or raw px. [ci: tokens] for hex, [review] for raw px
 - Status colours are theme colours named by meaning (`success`, `warning`, `danger`, `pending`) with AA contrast for both filled and light variants in both colour schemes. [review] [ux]
 - No `style={{ ... }}` props for visual styling; `styles`/`classNames` API only in the catalogued wrapper, never on a page. [ci: tokens] [review]
 

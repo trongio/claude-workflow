@@ -48,6 +48,7 @@ export type Gate = {
     inner?: boolean; // false: release-only (skipped by the inner loop)
     pending?: boolean;
     cache?: boolean;
+    requires?: string[]; // tools the gate needs; wf doctor and wf plan unpend check them
 };
 
 const SKIP = new Set(['node_modules', 'vendor', '.git', 'target', 'dist', 'build', '.venv', 'venv', '.workflow', '.next', '.nuxt', '.svelte-kit', 'coverage', '__pycache__', '.idea', '.vscode', 'storage', 'public']);
@@ -375,7 +376,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
             add({ name: 'go-vet', cmd: 'go vet ./...', when, heavy: true });
             add({ name: 'gofmt', cmd: 'test -z "$(gofmt -l .)"', when, fix: 'gofmt -w .' });
             if (['.golangci.yml', '.golangci.yaml', '.golangci.toml'].some((c) => existsSync(join(det.root, p.dir, c)))) {
-                out.gates.push({ name: `golangci-lint${suffix}`, cmd: 'golangci-lint run', when, heavy: true, ...(p.dir ? { cwd: p.dir } : {}), ...(has('golangci-lint') ? {} : { pending: true }) });
+                out.gates.push({ name: `golangci-lint${suffix}`, cmd: 'golangci-lint run', when, heavy: true, requires: ['golangci-lint'], ...(p.dir ? { cwd: p.dir } : {}), ...(has('golangci-lint') ? {} : { pending: true }) });
             }
         } else if (p.kind === 'rust') {
             const when = W(['*.rs', 'Cargo.toml', 'Cargo.lock']);
@@ -386,7 +387,7 @@ export function gatesFor(det: Detection, has: (c: string) => boolean = haveCmd):
             add({ name: 'rustfmt', cmd: 'cargo fmt --check', when, fix: 'cargo fmt' });
         }
     }
-    if (det.shell) out.gates.push({ name: 'shellcheck', cmd: 'git ls-files -z "*.sh" | xargs -0 -r shellcheck', when: ['*.sh'], ...(has('shellcheck') ? {} : { pending: true }) });
+    if (det.shell) out.gates.push({ name: 'shellcheck', cmd: 'git ls-files -z "*.sh" | xargs -0 -r shellcheck', when: ['*.sh'], requires: ['shellcheck'], ...(has('shellcheck') ? {} : { pending: true }) });
     return out;
 }
 

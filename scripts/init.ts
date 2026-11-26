@@ -53,7 +53,7 @@ const json = `${JSON.stringify(config, null, 2)}\n`;
 // One row per gate: name, cwd, how many `when` globs, and flags; a pending gate names what it needs.
 function summary(): string {
     const rows = gates.map((g) => {
-        const needs = g.pending ? missingTools(g.cmd, join(root, g.cwd ?? '')) : [];
+        const needs = g.pending ? (g.requires ?? missingTools(g.cmd, join(root, g.cwd ?? ''))) : [];
         const fl = [g.heavy ? 'heavy' : '', g.inner === false ? 'release-only' : '', g.release === false ? 'inner-only' : '', g.fix ? 'fix' : '', g.pending ? `pending (needs ${needs.join(', ') || 'install'})` : ''];
         return [g.name, g.cwd ?? '.', String(g.when.length), fl.filter(Boolean).join(', ') || '-'];
     });
