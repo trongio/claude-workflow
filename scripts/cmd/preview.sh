@@ -17,7 +17,7 @@ action="${1:-}" target="${2:-}"
 case "$action" in
 up | down) [ -n "$target" ] || action=usage ;;
 -h | --help)
-    sed -n '4,8p' "$0" | sed 's/^# \{0,1\}//'
+    wf_help "$0"
     exit 0
     ;;
 *) action=usage ;;
@@ -36,20 +36,22 @@ pidf="$dir/.workflow/preview.pid"
 
 if [ "$action" = down ]; then
     pid="$(cat "$pidf" 2>/dev/null || true)"
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    if [ -n "$pid" ] && wf_pid_in "$dir" "$pid"; then
         wf_kill_tree "$pid"
         echo "preview $(wf_wt_id "$dir"): stopped pid $pid"
+    elif [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        echo "preview $(wf_wt_id "$dir"): pid $pid is not running in $dir (reused by another process); not killed"
     else
         echo "preview $(wf_wt_id "$dir"): not running"
     fi
     rm -f "$pidf"
     # shellcheck disable=SC2016 # jq variables
-    [ -n "$pid" ] && wf_ledger_edit '.worktrees[$d].pids = ((.worktrees[$d].pids // []) - [$p])' --arg d "$dir" --argjson p "$pid"
+    [[ "$pid" =~ ^[0-9]+$ ]] && wf_ledger_has "$dir" && wf_ledger_edit '.worktrees[$d].pids = ((.worktrees[$d].pids // []) - [$p])' --arg d "$dir" --argjson p "$pid"
     exit 0
 fi
 
 port="$(wf_port "$dir")"
-if [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; then
+if [ -f "$pidf" ] && wf_pid_in "$dir" "$(cat "$pidf")"; then
     echo "preview $(wf_wt_id "$dir"): already running, http://127.0.0.1:$port (pid $(cat "$pidf"))"
     exit 0
 fi
@@ -74,7 +76,7 @@ pid=$!
 set +m
 echo "$pid" >"$pidf"
 # shellcheck disable=SC2016 # jq variables
-wf_ledger_edit '.worktrees[$d].pids = (((.worktrees[$d].pids // []) + [$p]) | unique)' --arg d "$dir" --argjson p "$pid"
+wf_is_task_dir "$dir" && wf_ledger_edit '.worktrees[$d].pids = (((.worktrees[$d].pids // []) + [$p]) | unique)' --arg d "$dir" --argjson p "$pid"
 for _ in $(seq 1 60); do
     wf_port_busy "$port" && break
     kill -0 "$pid" 2>/dev/null || {

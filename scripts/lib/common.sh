@@ -51,13 +51,22 @@ wf_base_branch() {
 }
 
 # Portable directory lock (no flock on macOS). wf_lock NAME; wf_unlock NAME.
+wf_lock() {
+    wf_lock_dir "$(git rev-parse --path-format=absolute --git-common-dir)/workflow-$1.lock" 600 "workflow: waiting for lock $1" || {
+        echo "workflow: lock $1 busy for 10 minutes" >&2
+        return 1
+    }
+}
+
+# wf_lock_dir DIR [WAIT_SECONDS] [WAIT_MESSAGE]: take the lock directory DIR,
+# waiting up to WAIT_SECONDS (default 600, 0 = try once); 1 when still busy.
 # A lock whose owner is gone is taken over by renaming its pid file (atomic):
 # only the waiter whose rename moved the dead owner's pid removes the lock; a
-# waiter that moved a live owner's pid (the lock was retaken meanwhile) puts it back.
-wf_lock() {
-    local dir i old taken
-    dir="$(git rev-parse --path-format=absolute --git-common-dir)/workflow-$1.lock"
-    for i in $(seq 1 600); do
+# waiter that moved a live owner's pid (the lock was retaken meanwhile) puts it
+# back. An empty pid file is an owner still starting up, never a dead one.
+wf_lock_dir() {
+    local dir="$1" wait="${2:-600}" waited=0 old taken
+    while :; do
         if mkdir "$dir" 2>/dev/null; then
             echo "$$" >"$dir/pid"
             return 0
@@ -74,11 +83,11 @@ wf_lock() {
             fi
             continue
         fi
-        [ "$i" = 1 ] && echo "workflow: waiting for lock $1" >&2
+        [ "$waited" -lt "$wait" ] || return 1
+        [ "$waited" = 0 ] && [ -n "${3:-}" ] && echo "$3" >&2
         sleep 1
+        waited=$((waited + 1))
     done
-    echo "workflow: lock $1 busy for 10 minutes ($dir)" >&2
-    return 1
 }
 wf_unlock() { rm -rf "$(git rev-parse --path-format=absolute --git-common-dir)/workflow-$1.lock"; }
 
@@ -142,7 +151,8 @@ wf_port_busy() {
 }
 
 # wf_port DIR: the worktree's port (allocated on first use from WF_PORT_BASE,
-# default 8100: free on the host and unused in the ledger), recorded under the lock.
+# default 8100: free on the host and unused in the ledger), recorded under the
+# lock for a task worktree (any other directory gets a free port, unrecorded).
 wf_port() {
     local dir="$1" p f
     p="$(wf_ledger_get "$dir" .port)"
@@ -157,7 +167,9 @@ wf_port() {
     while jq -e --argjson p "$p" '[.worktrees[].port] | index($p)' "$f" >/dev/null || wf_port_busy "$p"; do
         p=$((p + 1))
     done
-    jq --arg d "$dir" --argjson p "$p" '.worktrees[$d].port = $p' "$f" >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"
+    if wf_is_task_dir "$dir"; then
+        jq --arg d "$dir" --argjson p "$p" '.worktrees[$d].port = $p' "$f" >"$f.tmp.$$" && mv "$f.tmp.$$" "$f"
+    fi
     wf_unlock resources
     echo "$p"
 }
@@ -172,13 +184,13 @@ wf_expand() {
     printf '%s' "$text"
 }
 
-# wf_kill_tree PID: TERM the process group (or the pid), KILL after 3 s.
+# wf_kill_tree PID: TERM the process group (or the pid), KILL after 3 s. The
+# group is still killed when its leader has already exited.
 wf_kill_tree() {
     local pid="$1" _
-    kill -0 "$pid" 2>/dev/null || return 0
-    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || return 0
     for _ in 1 2 3 4 5 6; do
-        kill -0 "$pid" 2>/dev/null || return 0
+        kill -0 -- "-$pid" 2>/dev/null || kill -0 "$pid" 2>/dev/null || return 0
         sleep 0.5
     done
     kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null
@@ -187,6 +199,57 @@ wf_kill_tree() {
 
 # Resolved path (symlinks followed) of an existing dir, else the path as given.
 wf_real() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"; }
+
+# Is DIR a task worktree path: <main>/.workflow/worktrees/<ID> (it may be gone)?
+# Only these are ever recorded in the ledger or torn down.
+wf_is_task_dir() {
+    local root rest
+    root="$(wf_real "$(wf_main)")/.workflow/worktrees/"
+    rest="$(wf_real "${1%/}")"
+    case "$rest" in "$root"?*) rest="${rest#"$root"}" ;; *) return 1 ;; esac
+    [[ "$rest" != */* ]]
+}
+
+# Print a script's header help: the comment block after the shebang up to the
+# first line that is not a comment (`#` or `//`), markers stripped.
+wf_help() {
+    awk 'NR == 1 && /^#!/ { next } !/^(#|\/\/)/ { exit } { sub(/^(#|\/\/) ?/, ""); sub(/^wf-help: /, ""); if ($0 !~ /^shellcheck /) print }' "$1"
+}
+
+# pid<TAB>cwd for every process we can see.
+wf_proc_cwds() {
+    if [ -d /proc/self ] && find /proc/self/cwd -maxdepth 0 -printf '' 2>/dev/null; then
+        # One process for all pids (GNU find), instead of a readlink per pid.
+        find /proc/[0-9]*/cwd -maxdepth 0 -printf '%p\t%l\n' 2>/dev/null | sed 's|^/proc/\([0-9]*\)/cwd|\1|' || true
+    elif [ -d /proc/self ]; then
+        local d c
+        for d in /proc/[0-9]*; do
+            c="$(readlink "$d/cwd" 2>/dev/null)" || continue
+            printf '%s\t%s\n' "${d#/proc/}" "$c"
+        done
+    elif command -v lsof >/dev/null; then
+        lsof -nP -d cwd -Fpn 2>/dev/null | awk '/^p/ { p = substr($0, 2) } /^n/ { print p "\t" substr($0, 2) }'
+    fi
+}
+
+# wf_sweep DIR: kill (wf_kill_tree) every process whose cwd is inside DIR,
+# except this shell and its ancestors. Prints `stopped pid N` per process.
+wf_sweep() {
+    local dir real p pid cwd
+    dir="${1%/}"
+    real="$(wf_real "$dir")"
+    declare -A anc=()
+    p="${BASHPID:-$$}"
+    while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null; do
+        anc[$p]=1
+        p="$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')"
+    done
+    while IFS=$'\t' read -r pid cwd; do
+        [ -n "${anc[$pid]:-}" ] && continue
+        cwd="${cwd% (deleted)}"
+        case "$cwd/" in "$dir"/* | "$real"/*) wf_kill_tree "$pid" && echo "stopped pid $pid" ;; esac
+    done < <(wf_proc_cwds)
+}
 
 # Is DIR a registered worktree of this repository (other than the main checkout)?
 wf_is_worktree() {
@@ -272,27 +335,29 @@ wf_save_work() {
 }
 
 # wf_teardown DIR [--force]: tear one task worktree down. Refuses the main
-# checkout and any directory that is not a registered worktree. Order: save
-# uncommitted work as a wip commit (abort, changing nothing, when that fails),
-# run worktree.teardown (only for a worktree in the resource ledger, with its
-# .workflow/env exported), stop recorded processes still running inside it,
-# `git worktree remove` (abort when it fails; never rm -rf), delete the branch
-# when merged into the base (any branch with --force; never one that just got
-# a wip commit or is checked out elsewhere), drop the ledger entry. DIR may be
-# gone (a ledger leftover). Prints one line per action; returns 1 on abort.
+# checkout, anything outside <main>/.workflow/worktrees/ and any directory that
+# is not a registered worktree. Order: save uncommitted work as a wip commit
+# (abort, changing nothing, when that fails), run worktree.teardown (only for a
+# worktree in the resource ledger with a .workflow/env from wt-init; the
+# worktree.env keys are unset first so nothing leaks from the caller's
+# environment), stop recorded processes still running inside it, `git worktree
+# remove` (abort when it fails; never rm -rf), delete the branch when merged
+# into the base (any branch with --force; never one that just got a wip commit
+# or is checked out elsewhere), drop the ledger entry. DIR may be gone (a
+# ledger leftover). Prints one line per action; returns 1 on abort.
 wf_teardown() {
-    local dir="$1" force="${2:-}" branch="" cmd pid base main saved="" out
+    local dir="$1" force="${2:-}" branch="" cmd pid base main saved="" out keys
     main="$(wf_main)"
     base="$(wf_base_branch)"
     [ -n "$dir" ] || {
         echo "teardown: no directory given" >&2
         return 2
     }
+    if ! wf_is_task_dir "$dir"; then
+        echo "teardown: $dir is not a task worktree (<main>/.workflow/worktrees/<ID>); left in place" >&2
+        return 2
+    fi
     if [ -e "$dir" ]; then
-        if [ "$(wf_real "$dir")" = "$(wf_real "$main")" ]; then
-            echo "teardown: refusing the main checkout $dir" >&2
-            return 2
-        fi
         if ! wf_is_worktree "$dir"; then
             echo "teardown: $dir is not a registered worktree of $main; left in place" >&2
             return 2
@@ -310,15 +375,21 @@ wf_teardown() {
         fi
     fi
     [ -n "$branch" ] || branch="$(wf_ledger_get "$dir" .branch)"
-    if [ -d "$dir" ] && wf_ledger_has "$dir"; then
+    if [ -d "$dir" ] && wf_ledger_has "$dir" && [ ! -f "$dir/.workflow/env" ]; then
+        jq -e '(.worktree.teardown // []) | length > 0' "$(wf_config)" >/dev/null 2>&1 &&
+            echo "teardown: skipped worktree.teardown ($dir/.workflow/env missing: wt-init never ran there)"
+    elif [ -d "$dir" ] && wf_ledger_has "$dir"; then
+        keys="$(jq -r '.worktree.env // {} | keys[] | select(test("^[A-Za-z_][A-Za-z0-9_]*$"))' "$(wf_config)" | tr '\n' ' ')"
         while IFS= read -r cmd; do
             [ -n "$cmd" ] || continue
             cmd="$(wf_expand "$dir" "$cmd")"
             if (
                 cd "$dir" || exit 1
+                # shellcheck disable=SC2086 # one word per key
+                [ -z "$keys" ] || unset $keys
                 set -a
                 # shellcheck disable=SC1091
-                [ -f .workflow/env ] && . ./.workflow/env
+                . ./.workflow/env
                 set +a
                 bash -c "$cmd"
             ) >/dev/null 2>&1; then

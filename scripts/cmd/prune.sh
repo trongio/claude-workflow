@@ -2,14 +2,16 @@
 # wf-help: tear down merged/done worktrees, ledger leftovers and merged wf/* branches (dry run unless --apply)
 #
 # Usage: wf prune [--apply] [--force] [ID|DIR...]
-#   Only task worktrees are touched: those under .workflow/worktrees/ or in the
-#   resource ledger. The main checkout and any other worktree (yours, another
-#   tool's) are never touched. A task worktree is torn down (wf_teardown) when
+#   Only task worktrees are touched: those under .workflow/worktrees/. The main
+#   checkout and any other worktree (yours, another tool's) are never touched;
+#   a ledger entry for one (left by an older version) is dropped, nothing else.
+#   A task worktree is torn down (wf_teardown) when
 #   its branch is merged into the base branch and the tree is clean, or its
 #   card is done/verifying; a ledger entry whose worktree is gone is dropped.
 #   Merged wf/* branches without a worktree are deleted; an unmerged one only
 #   when its card is done/verifying and (finish.mode pr) `gh pr view` says
-#   MERGED (squash merges), or when named with --force. Naming an ID or DIR
+#   MERGED for the branch's current tip (squash merges; a commit made after the
+#   PR merged keeps the branch), or when named with --force. Naming an ID or DIR
 #   tears that worktree down regardless of status (uncommitted work is saved
 #   first; the branch is kept unless merged, or --force). Databases matching
 #   worktree.env templates (keys with DB or DATABASE) that no live worktree
@@ -27,14 +29,17 @@ for a in "$@"; do
     --apply) apply=1 ;;
     --force) force=--force ;;
     -h | --help)
-        sed -n '4,17p' "$0" | sed 's/^# \{0,1\}//'
+        wf_help "$0"
         exit 0
         ;;
     -*)
         echo "prune: unknown flag $a" >&2
         exit 2
         ;;
-    *) targets+=("$a") ;;
+    *)
+        # A DIR is relative to the caller's cwd, not the main checkout.
+        if [ -d "$a" ]; then targets+=("$(cd "$a" && pwd)"); else targets+=("$a"); fi
+        ;;
     esac
 done
 
@@ -49,17 +54,14 @@ n=0 rc=0
 
 card_status() { { "$wf" show "$1" 2>/dev/null || true; } | sed -n 's/^status: *//p' | head -1; }
 
-# Squash-merged: the card landed and GitHub says the branch's PR merged.
+# Squash-merged: GitHub says the branch's PR merged AND its head is the local
+# branch tip (a commit made after the merge would be lost otherwise).
 pr_merged() {
+    local info tip
     [ "$mode" = pr ] && command -v gh >/dev/null || return 1
-    [ "$(gh pr view "$1" --json state -q .state 2>/dev/null || true)" = MERGED ]
-}
-
-# A task worktree: under .workflow/worktrees/ or in the ledger, never main.
-is_task_dir() {
-    [ "$(wf_real "$1")" != "$(wf_real "$main")" ] || return 1
-    case "$(wf_real "$1")/" in "$(wf_real "$wtroot")"/*) return 0 ;; esac
-    wf_ledger_has "$1"
+    tip="$(git rev-parse -q --verify "refs/heads/$1")" || return 1
+    info="$(gh pr view "$1" --json state,headRefOid 2>/dev/null)" || return 1
+    [ "$(printf '%s' "$info" | jq -r '"\(.state) \(.headRefOid)"' 2>/dev/null)" = "MERGED $tip" ]
 }
 
 act() { # act DIR REASON [--force]
@@ -82,7 +84,13 @@ act() { # act DIR REASON [--force]
 delete_branch() { # delete_branch BRANCH REASON
     n=$((n + 1))
     if [ "$apply" = 1 ]; then
-        git branch -D "$1" >/dev/null && echo "deleted branch $1 ($2)"
+        local out
+        if out="$(git branch -D "$1" 2>&1)"; then
+            echo "deleted branch $1 ($2)"
+        else
+            echo "prune: could not delete branch $1: $(printf '%s' "$out" | tail -1)" >&2
+            rc=1
+        fi
     else
         echo "would delete branch $1 ($2)"
     fi
@@ -90,15 +98,15 @@ delete_branch() { # delete_branch BRANCH REASON
 
 if [ "${#targets[@]}" -gt 0 ]; then
     for t in "${targets[@]}"; do
-        if [ -d "$t" ]; then d="$(cd "$t" && pwd)"; else d="$wtroot/$t"; fi
+        if [[ "$t" == /* ]]; then d="$t"; else d="$wtroot/$t"; fi
         if [ -e "$d" ]; then
-            if ! is_task_dir "$d" || ! wf_is_worktree "$d"; then
-                echo "prune: $t is not a task worktree (.workflow/worktrees/<ID> or a ledger entry); not touched" >&2
+            if ! wf_is_task_dir "$d" || ! wf_is_worktree "$d"; then
+                echo "prune: $t is not a task worktree (.workflow/worktrees/<ID>); not touched" >&2
                 rc=2
                 continue
             fi
             act "$d" "named" "$force"
-        elif wf_ledger_has "$d"; then
+        elif wf_ledger_has "$d" && wf_is_task_dir "$d"; then
             act "$d" "named, worktree gone" "$force"
         elif [ ! -d "$t" ] && git rev-parse -q --verify "refs/heads/wf/$t" >/dev/null; then
             # A card ID with a branch but no worktree (abandoned card).
@@ -117,10 +125,10 @@ if [ "${#targets[@]}" -gt 0 ]; then
     exit "$rc"
 fi
 
-# Task worktrees (git worktrees under .workflow/worktrees/ or in the ledger).
+# Task worktrees (git worktrees under .workflow/worktrees/).
 declare -A seen=()
 while IFS=$'\t' read -r d br; do
-    is_task_dir "$d" || continue
+    wf_is_task_dir "$d" || continue
     seen[$d]=1
     br="${br#refs/heads/}"
     id="$(wf_wt_id "$d")"
@@ -138,10 +146,21 @@ while IFS=$'\t' read -r d br; do
 done < <(git worktree list --porcelain | awk '/^worktree / { if (p) print p "\t" b; p = substr($0, 10); b = "" }
     /^branch / { b = $2 } END { if (p) print p "\t" b }')
 
-# Ledger entries whose worktree is gone.
+# Ledger entries whose worktree is gone; entries for non-task directories
+# (recorded by an older version) are only forgotten.
 if [ -s "$ledger" ]; then
     while IFS= read -r d; do
         [ -n "${seen[$d]:-}" ] && continue
+        if ! wf_is_task_dir "$d"; then
+            n=$((n + 1))
+            if [ "$apply" = 1 ]; then
+                # shellcheck disable=SC2016 # jq variables
+                wf_ledger_edit 'del(.worktrees[$d])' --arg d "$d" && echo "forgot ledger entry $d (not a task worktree; nothing touched)"
+            else
+                echo "would forget ledger entry $d (not a task worktree; nothing touched)"
+            fi
+            continue
+        fi
         [ -e "$d" ] && continue
         act "$d" "worktree gone, ledger entry left"
     done < <(jq -r '.worktrees | keys[]' "$ledger")

@@ -18,8 +18,9 @@
 #   copy:  files copied once when missing, e.g. [".env"]
 #   env:   KEY -> template with {id} {slug} {port}, written to .workflow/env
 #   setup: shell commands run in the worktree afterwards, in order.
-# Also aligns core.hooksPath with the main checkout and records the worktree
-# (branch, port, databases) in the resource ledger that wf prune cleans up from.
+# Also aligns core.hooksPath with the main checkout and, for a task worktree
+# (.workflow/worktrees/<ID>), records it (branch, port, databases) in the
+# resource ledger that wf prune cleans up from. Other worktrees are never recorded.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +29,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 wf_need jq
 
 case "${1:-}" in -h | --help)
-    sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'
+    wf_help "$0"
     exit 0
     ;;
 esac
@@ -158,10 +159,13 @@ while IFS=$'\t' read -r k v; do
     printf "%s='%s'\n" "$k" "${v//\'/\'\\\'\'}" >>"$dir/.workflow/env.tmp"
     if [[ "$k" =~ DB|DATABASE ]]; then dbs+=("$v"); fi
 done < <(jq -r '.worktree.env // {} | to_entries[] | "\(.key)\t\(.value)"' "$cfg")
-if [ -s "$dir/.workflow/env.tmp" ]; then mv "$dir/.workflow/env.tmp" "$dir/.workflow/env"; else rm -f "$dir/.workflow/env.tmp"; fi
+# Written even when empty: teardown runs worktree.teardown only where it exists.
+mv "$dir/.workflow/env.tmp" "$dir/.workflow/env"
 
+# Only task worktrees (.workflow/worktrees/<ID>) enter the ledger that wf prune
+# and teardown act on; any other worktree stays the user's.
 # shellcheck disable=SC2016 # jq variables
-wf_ledger_edit '.worktrees[$d] = ((.worktrees[$d] // {}) + {id: $id, branch: $b, db: $db}
+wf_is_task_dir "$dir" && wf_ledger_edit '.worktrees[$d] = ((.worktrees[$d] // {}) + {id: $id, branch: $b, db: $db}
     | .created //= (now | todate) | .pids //= [])' \
     --arg d "$dir" --arg id "$(wf_wt_id "$dir")" --arg b "$(git branch --show-current)" \
     --argjson db "$(printf '%s\n' "${dbs[@]}" | jq -R . | jq -sc 'map(select(. != ""))')"
