@@ -68,6 +68,9 @@ echo "$out" | grep -qE 'not proven: .*src' && ok "gates: skipped gates listed as
 jq -e '.sha and .tree and (.results | length == 6) and (.results[] | select(.name == "slow") | .status == "TIMEOUT")' .workflow/gates-last.json >/dev/null &&
     ok "gates: gates-last.json written" || die "json"
 "$wf" gate-log | grep -q 'no_such_tool_wf' && ok "gate-log: last red gate" || die "gate-log"
+cfg '.gates += [{"name": "fullsuite", "cmd": "true", "inner": false}]'
+"$wf" gates --list | grep -qE '^fullsuite +release only' && ok "gates: inner:false is release only" || die "inner: $("$wf" gates --list)"
+cfg '.gates |= map(select(.name != "fullsuite"))'
 "$wf" gate-log slow | grep -q '^gate slow (TIMEOUT)' && ok "gate-log: named gate" || die "gate-log slow"
 
 # --last reprints without running.

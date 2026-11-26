@@ -11,6 +11,17 @@ set -eu
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 wf="$repo/bin/wf"
 dir="${1:-$(mktemp -d "${TMPDIR:-/tmp}/wf-plan.XXXXXX")}"
+# Scratch is removed on success unless WF_KEEP=1 or a dir was passed; kept on failure for debugging.
+own_scratch=$([ -z "${1:-}" ] && echo 1 || true)
+wf_scratch_cleanup() {
+    local rc="${1:-$?}"
+    if [ "$rc" = 0 ] && [ -n "$own_scratch" ] && [ -z "${WF_KEEP:-}" ]; then
+        git -C "$dir" worktree prune 2>/dev/null || true
+        rm -rf "$dir" "$dir".* "$dir"-*
+    fi
+    return "$rc"
+}
+trap wf_scratch_cleanup EXIT
 pass=0
 # Any accidental network call fails fast instead of reaching a registry.
 export https_proxy=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9

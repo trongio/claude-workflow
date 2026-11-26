@@ -130,6 +130,11 @@
             "type": "boolean",
             "default": false,
             "description": "CPU-heavy (tests, build, typecheck): counted against gatesJobs."
+          },
+          "inner": {
+            "type": "boolean",
+            "default": true,
+            "description": "Runs in the inner loop (plain wf gates). false = release only, e.g. the full test suite beside an affected-only test gate."
           }
         }
       }

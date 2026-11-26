@@ -15,6 +15,7 @@
 #   --timeout S  override every gate's timeout (default per gate 900 s).
 #   --release    the full pre-merge gate: release.cmd if set, else every gate
 #                with release != false, uncached. Logged to release.log.
+#                Gates with inner: false (full suites) run only here or with --all.
 #   --last       reprint the previous table if the tree is unchanged.
 #   --json       print .workflow/gates-last.json instead of the table.
 #   --list       print the gates and whether each would run, then exit.
@@ -201,18 +202,18 @@ if [ "$release" = 1 ] && [ -n "$release_cmd" ]; then
 fi
 
 # Gates: one NUL-separated record per gate.
-names=() cmds=() whens=() fixes=() caches=() cwds=() tmos=() pendings=() releases=() rwhens=() rmaxs=() heavies=()
+names=() cmds=() whens=() fixes=() caches=() cwds=() tmos=() pendings=() releases=() rwhens=() rmaxs=() heavies=() inners=()
 while IFS= read -r -d '' name && IFS= read -r -d '' cmd && IFS= read -r -d '' when &&
     IFS= read -r -d '' fixcmd && IFS= read -r -d '' cache && IFS= read -r -d '' cwd &&
     IFS= read -r -d '' gt && IFS= read -r -d '' pend && IFS= read -r -d '' rel &&
-    IFS= read -r -d '' rw && IFS= read -r -d '' rmax && IFS= read -r -d '' hv; do
+    IFS= read -r -d '' rw && IFS= read -r -d '' rmax && IFS= read -r -d '' hv && IFS= read -r -d '' inr; do
     names+=("$name") cmds+=("$cmd") whens+=("$when") fixes+=("$fixcmd") caches+=("$cache") cwds+=("$cwd")
-    tmos+=("${tmo:-$gt}") pendings+=("$pend") releases+=("$rel") rwhens+=("$rw") rmaxs+=("$rmax") heavies+=("$hv")
+    tmos+=("${tmo:-$gt}") pendings+=("$pend") releases+=("$rel") rwhens+=("$rw") rmaxs+=("$rmax") heavies+=("$hv") inners+=("$inr")
 done < <(jq -j '.gates[] | .name, "\u0000", .cmd, "\u0000", ((.when // []) | join("\n")), "\u0000",
     (.fix // ""), "\u0000", (if .cache == false then "0" else "1" end), "\u0000", (.cwd // "."), "\u0000",
     (.timeout // 900 | tostring), "\u0000", (if .pending == true then "1" else "0" end), "\u0000",
     (if .release == false then "0" else "1" end), "\u0000", (.rerun.when // ""), "\u0000",
-    (.rerun.max // 1 | tostring), "\u0000", (if .heavy == true then "1" else "0" end), "\u0000"' "$cfg")
+    (.rerun.max // 1 | tostring), "\u0000", (if .heavy == true then "1" else "0" end), "\u0000", (if .inner == false then "0" else "1" end), "\u0000"' "$cfg")
 
 regex_for() {
     local globs=()
@@ -228,6 +229,8 @@ for i in "${!names[@]}"; do
         reason="not selected"
     elif [ "$release" = 1 ] && [ "${releases[$i]}" = 0 ]; then
         reason="not in release"
+    elif [ "$release" = 0 ] && [ "$all" = 0 ] && [ "${inners[$i]}" = 0 ]; then
+        reason="release only"
     elif [ "${pendings[$i]}" = 1 ]; then
         reason="pending"
     elif [ "$all" = 0 ] && [ -n "${whens[$i]}" ] && ! grep -qE "$(regex_for "${whens[$i]}")" "$tmp/changed"; then
