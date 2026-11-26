@@ -9,7 +9,7 @@
     "Vercel or a Node container on a VPS"
   ],
   "avoid": [
-    "heavy background work (needs a separate worker anyway)",
+    "heavy background work, unless a separate worker process (a queue consumer next to the app) is acceptable",
     "the team wants batteries (queues, admin, i18n) from one framework",
     "strict cost control on serverless at scale"
   ],
@@ -184,7 +184,7 @@
         "package.json",
         "package-lock.json",
         "*.css",
-        "vite.config.*"
+        "next.config.*"
       ],
       "heavy": true,
       "requires": [
@@ -233,7 +233,7 @@
     },
     {
       "name": "secrets",
-      "cmd": "gitleaks detect --no-banner --redact --exit-code 1",
+      "cmd": "gitleaks git --no-banner --redact --exit-code 1",
       "when": [
         "*"
       ],

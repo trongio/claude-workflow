@@ -22,13 +22,13 @@ it renders.
 - **Use only catalogued components.** `CATALOG.md` (next to the components) lists every component with its
   props, variants and when to use it. Read it before building anything. [review]
 - **A new component enters the catalog and the gallery in the same change.** The gallery is a dev-only page
-  (`/dev/gallery`) that renders every component in every variant and state, in the widest locale, at
+  (a route such as `/dev/gallery`; pick one and name it here) that renders every component in every variant and state, in the widest locale, at
   375 px and 1440 px. A component missing from either is a review blocker. [review] [not yet: a guard test that every exported component appears in CATALOG.md and the gallery]
 - **Typed options, not copies.** A component that nearly fits gets a typed `variant`, `tone` or `size` option.
   Never copy it, never restyle it from a page. A page's `className` (or style hook) only places a component:
-  margin, width, grid or flex placement. [review] [ci: dupes]
+  margin, width, grid or flex placement. [review] [ci: dupes] (a stack with no `dupes` gate: [not yet: copy-paste gate])
 - Every exported component exports its props type (`<Name>Props`). [review]
-- Two blocks of the same markup become one component; the duplicate-code gate only shrinks. [ci: dupes]
+- Two blocks of the same markup become one component; the duplicate-code gate only shrinks. [ci: dupes] (a stack with no `dupes` gate: [not yet: copy-paste gate])
 
 ## 3. Tokens only
 
@@ -42,7 +42,8 @@ it renders.
 ## 4. Layout and responsiveness
 
 - **Mobile first.** Design and build the 375 px layout first, then add columns. Check every surface at
-  **320, 375, 768, 1024 and 1440 px**. Zero horizontal page scroll at every width. [ux]
+  the `dev.viewports` widths (**375 and 1440 px** by default; add a width where the layout has a breakpoint
+  between them). Zero horizontal page scroll at every width. [ux]
 - **Verification is by LOOKING** at screenshots in the widest locale (`{{WIDEST_LOCALE}}`). A zero-overflow
   measurement (`scrollWidth === clientWidth`) is not verification: it passes while a word shreds
   mid-syllable, a sentence clips inside a scrolling cell or a button sits off-screen. Open the PNGs. [ux]
@@ -90,10 +91,12 @@ Every view designs all of these before it is done: [review] [ux]
 - Plain, concrete words in the user's language and domain; no filler ("Seamlessly manage your..."). [ux]
 - Every visible string, `aria-label`, `title`, `alt`, `placeholder` and `sr-only` text is an i18n key. Library
   defaults that ship English (`<span class="sr-only">Close</span>`) are replaced when the component is
-  added. [hook] [ci: i18n check] [review]
-- Numbers, dates, currencies and lists are formatted with the locale's `Intl` formatter (pin `hourCycle`
-  where the locale's default surprises users). [review]
-- No dashes as sentence punctuation in UI copy; use full stops and commas. [review]
+  added. [not yet: i18n check] [review]
+- Numbers, dates, currencies and lists are formatted with the locale's `Intl` formatter. [review]
+<!-- tune: house copy and formatting conventions. The lines below are examples from earlier projects; keep, change or delete each. -->
+- Example: pin `hourCycle` (for example `h23`) where a locale's default clock surprises users. [review]
+- Example: no dashes as sentence punctuation in UI copy; use full stops and commas. [review]
+<!-- /tune -->
 
 ## 8. Accessibility
 

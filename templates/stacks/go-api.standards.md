@@ -2,7 +2,7 @@
 
 ### Strictness
 - Go version pinned in `go.mod` (`go` and `toolchain` lines) from the STACK.md version table. [review]
-- `golangci-lint` v2 with a committed `.golangci.yml`: `default: standard` plus `errorlint`, `wrapcheck` (at package boundaries), `bodyclose`, `noctx`, `sqlclosecheck`, `rowserrcheck`, `contextcheck`, `gosec`, `exhaustive`, `forcetypeassert`, `nilnil`, `gocritic`, `revive`; formatters `gofumpt` and `goimports`. A v1 binary cannot read a v2 config, so the gate is pending, never green, until v2 is installed. [ci: golangci-lint]
+- `golangci-lint` v2 with a committed `.golangci.yml`: `default: standard` plus `errorlint`, `wrapcheck` (at package boundaries), `bodyclose`, `noctx`, `sqlclosecheck`, `rowserrcheck`, `contextcheck`, `gosec`, `exhaustive`, `forcetypeassert`, `nilnil`, `gocritic`, `revive`; formatters `gofumpt` and `goimports` in the config (`golangci-lint fmt` applies them). A v1 binary cannot read a v2 config, so the gate is pending, never green, until v2 is installed. [ci: golangci-lint]
 - No `//nolint` without a linter name and a reason on the same line; the count only shrinks. [review] [not yet: a nolint-count guard]
 - `govulncheck ./...` in the release gate. [ci: govulncheck]
 
@@ -29,4 +29,6 @@
 - `go test -race -shuffle=on -count=1 ./...` in the release gate; the inner loop relies on Go's test cache. [ci: go-test-full]
 - Integration tests against real Postgres (testcontainers or a per-package database), table-driven, `t.Parallel()` where safe. [ci]
 - Authorization: a router test walks `chi.Walk` and fails when a non-GET route lacks the authorize middleware; each state-changing route has a 403 test. [guard-test]
+{{#if hardware}}
 - Device or edge drivers implement one interface and pass a shared contract test suite against a wire-faithful simulator. A green simulator test never replaces a hardware check. [guard-test] [review]
+{{/if}}

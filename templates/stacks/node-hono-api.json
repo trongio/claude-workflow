@@ -195,7 +195,7 @@
     },
     {
       "name": "secrets",
-      "cmd": "gitleaks detect --no-banner --redact --exit-code 1",
+      "cmd": "gitleaks git --no-banner --redact --exit-code 1",
       "when": [
         "*"
       ],

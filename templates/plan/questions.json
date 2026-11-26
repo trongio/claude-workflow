@@ -302,7 +302,7 @@
       "key": "locales",
       "round": 3,
       "header": "Languages",
-      "question": "Which interface languages does v1 ship? Use Other to type locale codes, e.g. en, de, ka.",
+      "question": "Which interface languages does v1 ship? Use Other to type locale codes, e.g. en, de, fi.",
       "multiSelect": false,
       "type": "list",
       "detect": "locales",

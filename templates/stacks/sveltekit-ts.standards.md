@@ -10,7 +10,7 @@
 ### Server boundary
 - Server code lives under `src/lib/server/`; SvelteKit refuses to bundle it into the client. Secrets come from `$env/static/private` or `$env/dynamic/private` only. [ci: build]
 - `svelte-check --fail-on-warnings` is the typecheck; Svelte 5 runes (`$props`, `$state`, `$derived`) with typed props. [ci: typecheck]
-- Every form action, `+server.ts` handler and `load` that reads private data: parse input with zod, load the session, authorize (one `can(user, action, resource)` helper), then call a use case in `src/server/`. A test per state-changing action proves an unauthorized caller is refused; nested resources get their own test. [guard-test]
+- Every form action, `+server.ts` handler and `load` that reads private data: parse input with zod, load the session, authorize (one `can(user, action, resource)` helper), then call a use case in `src/lib/server/`. A test per state-changing action proves an unauthorized caller is refused; nested resources get their own test. [guard-test]
 - Form actions return `fail(status, { error: { key, params } })` on refusal and keep the submitted values; they never throw raw errors to the client and never return exception messages. [review]
 - Forms work without JavaScript first (`use:enhance` is progressive enhancement, not a requirement). [guard-test: one Playwright journey with JS disabled]
 - `invalidate`/`depends` keys are named constants shared by the loader and the mutation. [review]
@@ -32,4 +32,4 @@
 - Playwright journeys at 375 px and 1440 px with the widest locale active. [ci: e2e]
 
 ### i18n
-- Paraglide message catalogs in `messages/<locale>.json`, ICU MessageFormat for plurals; a test asserts every key exists in every locale with the same ICU arguments. [guard-test]
+- Paraglide message catalogs in `messages/<locale>.json`. Paraglide's default inlang message format is not ICU MessageFormat: plurals use its variants and `plural` declarations, or the project installs an ICU MessageFormat plugin and says which in `docs/STACK.md`. A test asserts every key exists in every locale with the same parameters. [guard-test]

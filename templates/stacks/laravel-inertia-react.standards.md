@@ -1,8 +1,8 @@
 ## Stack rules: Laravel + Inertia + React
 
 ### PHP strictness
-- `declare(strict_types=1);` in every PHP file, added by Pint (`"declare_strict_types": true` in `pint.json`). [ci: pint]
-- Larastan at level `max` with `phpstan/phpstan-strict-rules` and `bleedingEdge.neon` included; `tmpDir: .phpstan-cache` so worktrees reuse the cache. [ci: phpstan]
+- `declare(strict_types=1);` in every PHP file, added by Pint (`"rules": {"declare_strict_types": true}` in `pint.json`). [ci: pint]
+- Larastan at level `max` with `phpstan/phpstan-strict-rules` and `bleedingEdge.neon` included; `tmpDir` set to one absolute path shared by every worktree (for example `%env.HOME%/.cache/phpstan/<project>` or an absolute path written by `wf wt-init`), so worktrees reuse the cache; a relative `tmpDir` gives each worktree a cold cache. [ci: phpstan]
 - The phpstan baseline only shrinks: a new `ignoreErrors` entry or a regenerated baseline that grows is a review blocker. Pay debt down with `--generate-baseline` only when the count falls. [review] [not yet: a baseline-size guard test]
 - Typed config reads: `Config::string()`, `Config::integer()`, `Config::boolean()`, never `config()` cast by hand. [ci: phpstan]
 - No `mixed` leaking out of a service: request input goes through a FormRequest, then a typed DTO (`spatie/laravel-data`), before it reaches an Action. [review]
@@ -24,7 +24,7 @@
 ### HTTP layer
 - Every state-changing route has a FormRequest whose `authorize()` calls a policy ability, and a Feature test on THAT route (and each child route of a resource) that a user without the ability gets 403. A test on the parent route does not cover the child. [guard-test: a route-list test fails when a POST/PUT/PATCH/DELETE route has no `can:` middleware or FormRequest]
 - Controllers are thin: validate (FormRequest), authorize, call one Action, return an Inertia response or redirect. Business rules live in `app/Actions/`. [review]
-- Validation errors and flash messages are translation keys; Inertia shares them and the client resolves them. [ci: i18n check]
+- Validation errors and flash messages are translation keys; Inertia shares them and the client resolves them. [not yet: i18n check]
 - Exceptions rendered to users carry a message key; `report()` logs never include request bodies, SQL bindings or PII. [review]
 
 ### Tests

@@ -4,7 +4,7 @@
 - Python version pinned in `pyproject.toml` (`requires-python`) and `.python-version` from the STACK.md version table; dependencies locked with `uv.lock`. [review]
 - `mypy --strict` with `django-stubs` (plugin enabled, `strict_settings = true`); no `# type: ignore` without an error code and a reason. [ci: mypy]
 - Ruff with `select = ["ALL"]` minus a short, commented ignore list (`D` docstrings, `COM812`, `ISC001`); `ruff format` is the formatter. The ignore list only shrinks. [ci: ruff]
-- `manage.py check --fail-level WARNING` and `check --deploy` in the release gate with production settings. [ci: django-check]
+- `manage.py check --fail-level WARNING` runs on every change. [ci: django-check] `check --deploy` with production settings runs before each deploy. [not yet: a release gate that runs `check --deploy` against production settings]
 
 ### Models and queries
 - Migrations are generated, committed and checked: `makemigrations --check --dry-run` fails on drift. Reviewed as their own change; data migrations separate from schema migrations. [ci: migrations]
@@ -22,7 +22,7 @@
 - Every view that changes state is POST (or PUT/PATCH/DELETE via htmx), requires login and a permission check (`PermissionRequiredMixin` or an explicit `has_perm`), and has a test that a user without the permission gets 403, including nested resources. [guard-test: a URL-pattern test fails when a non-GET view has no permission check]
 - CSRF stays on; htmx sends the token via `hx-headers` set once in the base template. [review]
 - htmx partials are templates under `templates/<app>/partials/`; a partial and its full page render the same include, never two copies. [review]
-- A refused form re-renders with the user's input and the field error, with status 422 so htmx swaps it. [review] [ux]
+- A refused form re-renders with the user's input and the field error, with status 422. htmx 2 does not swap 4xx responses by default, so the base template sets `htmx.config.responseHandling` (or an `htmx:beforeSwap` handler) to swap 422 into the form. [review] [ux]
 - Errors shown to users are message keys (`gettext_lazy`); logs never include request bodies, SQL params or PII. [review]
 
 ### Tests

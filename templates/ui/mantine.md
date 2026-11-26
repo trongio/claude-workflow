@@ -9,7 +9,7 @@
 - Product components in `components/app/` wrap Mantine components and expose typed `variant`/`tone`/`size` props; pages use the wrappers, not raw Mantine components with ad-hoc props, for anything catalogued. [review]
 - A page passes only placement props (`mt`, `w`, `maw`, grid span); appearance belongs in the wrapper's variants. [review]
 - Forms with `@mantine/form` + a zod resolver; a refused submit keeps values and shows the server's reason on the field. [review] [ux]
-- Every icon-only `ActionIcon` has an `aria-label` from an i18n key. [ci: i18n check]
+- Every icon-only `ActionIcon` has an `aria-label` from an i18n key. [not yet: i18n check]
 
 ### Known traps
 - `Table` cells do not wrap long localized words by default inside `Table.ScrollContainer`: set `style` via the catalog wrapper to `overflow-wrap: anywhere` for prose columns, and check in the widest locale. [ux]

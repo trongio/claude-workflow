@@ -44,7 +44,7 @@ Do not wait for them; the interview starts now.
 2. `wf plan questions --json` returns the next <= 4 unanswered questions as AskUserQuestion payloads
    (header, question, multiSelect, options), with anything detect answered already filled in. Pass them
    to ONE AskUserQuestion call unchanged. Record each answer with `wf plan set KEY "<label>"` (multi
-   select: a JSON array of labels; "Other" text as typed, e.g. locale codes `"en, de, ka"`). The script
+   select: a JSON array of labels; "Other" text as typed, e.g. locale codes `"en, de, fi"`). The script
    maps labels to values.
 3. Repeat for rounds 2 and 3. After round 3, `wf plan defaults` records the rest as assumptions.
 

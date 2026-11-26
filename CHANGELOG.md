@@ -9,7 +9,13 @@ any card, and the deterministic parts of the loop moved into scripts.
 - `wf start` creates the task branch and its own worktree (0.1 never created
   the task branch, so two tasks could share one checkout). `wf finish` lands
   per `finish.mode` (PR by default), runs `tracker.onMerge`, tears down the
-  worktree, branch, DB and ports (`worktree.teardown`).
+  worktree, branch, DB and ports (`worktree.teardown`). PR mode needs
+  `push: true` and parks the card in `owner-review` until the PR merges; a
+  second `wf finish ID` after the merge moves it to `verifying` and deletes
+  the branch. Teardown aborts rather than lose uncommitted work.
+- High-risk cards without owner approval park in `owner-review` in every
+  finish mode (`review.ownerHoldHigh`). `wf risk` has built-in high patterns
+  when `risk.high` is unset; `wf risk --explain`.
 - New status `verifying` between landing and `done`; `wf move ID done
   --verified "how"` closes a card. Merged is not done.
 - `wf outcome` writes the record skeleton (gate table, diffstat, commits,
@@ -33,12 +39,14 @@ any card, and the deterministic parts of the loop moved into scripts.
   or pending is not proven, a missing tool is red), `--json`, `--last`;
   per-gate `cwd`, `timeout`, `pending`, `release`, `rerun`, `heavy`;
   `gatesJobs`, `gatesCacheKeys`, `release.cmd`, `testAffected`.
-- `wf gate-log`, `wf doctor`, `wf orphans`, `wf prune`, `wf test-affected`,
-  `wf preview`.
+- `wf gate-log`, `wf doctor`, `wf orphans` (`--kill ID|DIR` scoped, `--all`),
+  `wf prune` (`--apply [ID]`, only `.workflow/worktrees` and ledger
+  entries), `wf test-affected`, `wf preview`.
 
 ### Verification and search
 - `wf check` (one JSON line per page and viewport), `wf shots`, `wf flow`,
-  `wf rgx`, `wf lang`. Checks run in `ux.widestLocale`.
+  `wf rgx`, `wf lang`. Checks run in `ux.widestLocale` at `dev.viewports`
+  (default 375 and 1440).
 
 ### Agents
 - Planner: exact file lists, required extractions up front, guard rules
@@ -54,13 +62,15 @@ any card, and the deterministic parts of the loop moved into scripts.
 - Read-only agents restricted by `tools` or `disallowedTools`.
 
 ### Defaults changed
-- `push` defaults to false; `finish.mode` defaults to `pr`.
+- `push` defaults to false; `finish.mode` defaults to `pr`, which refuses to
+  run until `push` is true (`merge` and `none` never push).
+- `dev.viewports` defaults to `[375, 1440]`.
 - Overnight runner uses `--permission-mode auto` and skips
   `overnight.exclude` tags (migration, deploy, hardware).
 
 ## 0.1.0 (2026-10-14)
 
-First public release, extracted from a production e-commerce project where it
+First public release, extracted from a production web project where it
 ran daily.
 
 - Plugin + marketplace in one repo (`workflow@trongio`).
