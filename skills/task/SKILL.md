@@ -180,8 +180,20 @@ Per `finish.mode`:
   task branch onto the base and run `wf finish <ID>` again.
 - `none`: leaves the branch. Never pushes.
 
+Act on the exit code of `wf finish <ID>` (also in `wf finish --help`):
+
+| exit | meaning | your next step |
+|---|---|---|
+| 0 | landed (card in `verifying`), or the PR was opened or updated and the card waits in `owner-review` | landed: section 12; PR: stop until the owner merges, then `wf finish <ID>` again |
+| 1 | a landing step failed (push, gh, merge error, timeout); the card stays, with a note | read the message, fix the cause, rerun |
+| 2 | refused before anything landed (unticked card, dirty tree, red gates, the branch moved past the gated commit, gh missing, headless `--force`) | fix what the message names, rerun; never reach for `--force` to get past red gates |
+| 3 | merge conflict; the base is untouched | rebase the task branch onto the base in its worktree, resolve, commit, then `wf finish <ID>` |
+| 4 | held for the owner (high risk) | stop and report; the owner runs `wf approve <ID>` |
+| 5 | nothing to land (no changes against the base) | `wf move <ID> done --verified "<how>"` if the work is already in, else `wf move <ID> backlog` |
+
 `wf finish` refuses while the worktree has uncommitted or untracked files:
-commit or discard them, then rerun (`--force` commits them as wip). In `pr`
+commit or discard them, then rerun (`--force` commits them as wip, only in
+`.workflow/worktrees/<ID>`; headless sessions cannot use `--force`). In `pr`
 mode, after the merge it prints the `git pull --rebase` for the main checkout
 when the local base is behind; run it yourself when nothing else uses it. If `wf doctor` lists leftovers you created, remove them
 (`wf orphans --kill <ID>`, `wf prune --apply <ID>`) and run it again; a bare
