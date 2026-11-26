@@ -55,7 +55,7 @@ night)
     sed -n '2,14p' "$src" | sed 's/^# \{0,1\}//'
     for f in "$scripts"/cmd/*; do
         [ -e "$f" ] || continue
-        printf '  wf %-14s %s\n' "$(basename "${f%.*}")" "$(sed -n 's/^\(#\|\/\/\) wf-help: //p' "$f" | head -1)"
+        printf '  wf %-14s %s\n' "$(basename "${f%.*}")" "$(sed -nE 's@^(#|//) wf-help: @@p' "$f" | head -1)"
     done
     ;;
 *)
