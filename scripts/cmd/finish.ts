@@ -89,13 +89,16 @@ const dir = worktreeOf(branch);
 
 // 2. Uncommitted work never lands half-way, and teardown never has to rescue it.
 if (dir) {
-    const dirty = git(['status', '--porcelain', '--untracked-files=all'], dir).out.split('\n').filter(Boolean).map((l) => l.replace(/^[ MTADRCU?!]{1,2} /, '')); // git() trims the first line's leading space
+    // .workflow/ is wf's own state (gate logs, previews), never work; same rule as wf_save_work.
+    const own = git(['check-ignore', '-q', '.workflow'], dir).ok ? [] : ['--', '.', ':(exclude).workflow'];
+    // git() trims the first line's leading status space, so the status is matched, not sliced.
+    const dirty = git(['status', '--porcelain', '--untracked-files=all', ...own], dir).out.split('\n').filter(Boolean).map((l) => l.replace(/^[ MTADRCU?!]{1,2} /, ''));
     if (dirty.length && !force) {
         const more = dirty.length > 10 ? `\n  +${dirty.length - 10} more` : '';
         fail(`${card.id}: ${dir} has uncommitted work:\n${dirty.slice(0, 10).map((f) => `  ${f}`).join('\n')}${more}\ncommit or remove it, then wf finish ${card.id} again (--force commits it as wip)`);
     }
     if (dirty.length) {
-        const ok = git(['add', '-A'], dir).ok && git(['commit', '--quiet', '--no-verify', '-m', `wip: ${card.id} uncommitted work at wf finish --force`], dir).ok;
+        const ok = git(['add', '-A', ...own], dir).ok && git(['commit', '--quiet', '--no-verify', '-m', `wip: ${card.id} uncommitted work at wf finish --force`], dir).ok;
         if (!ok) fail(`${card.id}: could not commit the uncommitted work in ${dir}`);
         say(`--force: committed ${dirty.length} uncommitted path(s) as a wip commit on ${branch}`);
     }

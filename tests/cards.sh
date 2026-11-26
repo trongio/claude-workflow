@@ -113,6 +113,11 @@ view)
     jq -c --arg h "$head" '{number, state, url, headRefOid: $h}' <<<"$pr"
     ;;
 create)
+    # GH_CREATE_NOOP: the forge answers but the new PR is not visible yet.
+    [ -z "${GH_CREATE_NOOP:-}" ] || {
+        echo "https://example.invalid/pull/0"
+        exit 0
+    }
     head=""
     while [ $# -gt 0 ]; do
         [ "$1" = --head ] && head="$2"
@@ -445,5 +450,53 @@ set_config '.push = false'
 "$wf" finish "$id" --mode merge --force >"$dir.out" 2>&1 || die "finish --force red: $(cat "$dir.out")"
 grep -q 'WARNING: --force lands' "$dir.out" && grep -q 'landed WITHOUT green release gates' tasks/"$id"-*.md && [ -f red.txt ] &&
     ok "--force lands red gates with a loud note on the card" || die "red --force: $(cat "$dir.out")"
+# The forced landing brought the red gate to main: later cards get a green one again.
+set_config '.gates = [{"name": "ok", "cmd": "true", "when": ["*"]}]'
+
+# Work saved by teardown after a PR merged (a wip commit past the merged head) keeps the branch, local and remote.
+id="$("$wf" new "Late" --links "#9" | cut -d' ' -f1)"
+criterion "$id" && git add -A tasks && git commit -qm "chore(tasks): $id" -q
+ready "$id" late.txt
+set_config '.push = true | .tracker.onMerge = "echo late > .workflow/worktrees/$WF_CARD/late-wip.txt"'
+"$wf" finish "$id" --mode pr --no-cleanup >/dev/null 2>&1 || die "first pr finish (Late)"
+gh_merge "$(jq --arg b "wf/$id" '[.[] | select(.head == $b)][0].number' "$GH_STATE")"
+expect "finish a merged PR while work appears in the worktree" "$wf" finish "$id" --mode pr
+grep -q "kept branch wf/$id: its tip" "$dir.out" && git show "wf/$id:late-wip.txt" >/dev/null 2>&1 && [ -n "$(git ls-remote origin "refs/heads/wf/$id")" ] &&
+    [ "$(field "$id" status)" = verifying ] && ok "a wip commit past the merged head keeps the branch and its remote" || die "late work: $(cat "$dir.out")"
+set_config '.push = false | .tracker.onMerge = ""'
+
+# A merged PR counts only for the branch tip, also after a fresh push and create.
+set_config '.push = true'
+id="$(newcard "Moved on")"
+ready "$id" moved.txt
+"$wf" finish "$id" --mode pr >/dev/null 2>&1 || die "first pr finish"
+gh_merge "$(jq --arg b "wf/$id" '[.[] | select(.head == $b)][0].number' "$GH_STATE")"
+"$wf" move "$id" in-progress >/dev/null && "$wf" start "$id" >/dev/null
+commit_in "$dir/.workflow/worktrees/$id" moved2.txt
+GH_CREATE_NOOP=1 "$wf" finish "$id" --mode pr >"$dir.out" 2>&1 || die "finish with a stale merged PR: $(cat "$dir.out")"
+[ "$(field "$id" status)" = owner-review ] && grep -q "merged at .*, not the branch tip $(git rev-parse --short=7 "wf/$id")" "$dir.out" &&
+    ok "a merged PR for an older head never lands the new tip" || die "stale merged after create: $(cat "$dir.out")"
+set_config '.push = false'
+"$wf" move "$id" backlog >/dev/null
+
+# Waiting on the owner: the question is shown whole, and a kept worktree is not a leftover.
+id="$(newcard "Question")"
+"$wf" start "$id" >/dev/null
+q="owner: should the export include archived employees, and if so do we mark them with a badge, a separate sheet, or a column that says when they left the company?"
+"$wf" park "$id" "$q" >/dev/null
+echo "{\"worktrees\":{\"$dir/.workflow/worktrees/$id\":{\"id\":\"$id\",\"branch\":\"wf/$id\"}}}" >.git/workflow-resources.json
+"$wf" status >"$dir/.status"
+shown="$(sed -n "/^waiting on owner/,/^[a-z]/p" "$dir/.status" | tr -s ' \n' ' ')"
+grep -q leftovers "$dir/.status" && die "owner-review card with its worktree reported as leftover: $(cat "$dir/.status")" || true
+[[ "$shown" == *"$id $q "* ]] && ! grep -q "^  $id .*~$" "$dir/.status" && [ "$(wc -l <"$dir/.status")" -le 25 ] &&
+    ok "status: full owner question wrapped, parked worktree not a leftover" || die "status owner text: $(cat "$dir/.status")"
+rm .git/workflow-resources.json
+expect "approve the parked card" "$wf" approve "$id"
+[ "$(field "$id" status)" = in-progress ] && ! "$wf" status | sed -n '/^waiting on owner/,/^[a-z]/p' | grep -q "^  $id " && ok "approve restores the parked status and leaves waiting on owner" || die "approve unpark: $("$wf" status)"
+
+# A started card whose worktree is gone says how to resume.
+git worktree remove --force "$dir/.workflow/worktrees/$id"
+"$wf" status | grep -q "worktree gone: $id (worktree gone: wf start $id to resume or wf move $id backlog)" && ok "status hints at a lost worktree" || die "status gone: $("$wf" status)"
+"$wf" show "$id" 2>&1 >/dev/null | grep -q "hint: worktree gone: wf start $id to resume" && ok "show hints at a lost worktree" || die "show gone hint"
 
 echo "cards.sh: $pass passed ($dir)"

@@ -49,7 +49,8 @@ results, and follow-up cards.
 | verifying | landed (merged), not yet observed working where it runs | `wf finish` (in `pr` mode: the second run, after the PR merged) |
 | done | observed working; `--verified` says how | `wf move <ID> done --verified "..."` |
 
-Only the owner moves a card out of `owner-review`, unless the card says the
+Only the owner moves a card out of `owner-review` (`wf approve <ID>` approves
+the branch tip and puts the card back where it was), unless the card says the
 manager may finish it alone. A card parked by `wf finish` in `pr` mode leaves
 it when `wf finish <ID>` runs again after the PR merged. A `blocked` value starting with `owner` lists the
 card under "waiting on owner".
