@@ -199,7 +199,8 @@ wf_kill_tree() {
 }
 
 # wf_timed SECS LOG DIR CMD [PGFILE]: run CMD (bash -c) in DIR in its own
-# process group, output to LOG (- = this stderr), stdin from /dev/null. A watchdog TERMs then
+# process group, output to LOG (- = this stderr, = = this stdout and stderr as
+# they are), stdin from /dev/null. A watchdog TERMs then
 # KILLs the whole group after SECS; the return code is then 124. The group
 # and watchdog pids go to PGFILE when given (for a caller's signal trap).
 # Turns job control on for the call (each job its own group) and restores it.
@@ -211,6 +212,8 @@ wf_timed() {
     set -m
     if [ "$log" = - ]; then
         (cd "$wdir" && exec bash -c "$cmd") >&2 </dev/null &
+    elif [ "$log" = = ]; then
+        (cd "$wdir" && exec bash -c "$cmd") </dev/null &
     else
         (cd "$wdir" && exec bash -c "$cmd") >"$log" 2>&1 </dev/null &
     fi
@@ -234,6 +237,19 @@ wf_timed() {
         rc=124
     fi
     return "$rc"
+}
+
+# wf_kill_groups PGFILE...: TERM, then KILL, every process group a wf_timed
+# PGFILE lists (for a signal trap: a signal to the caller alone misses them).
+wf_kill_groups() {
+    local f p sig
+    for sig in TERM KILL; do
+        for f in "$@"; do
+            [ -f "$f" ] || continue
+            while read -r p; do kill -"$sig" -- "-$p" 2>/dev/null || true; done <"$f"
+        done
+        if [ "$sig" = TERM ]; then sleep 0.5; fi
+    done
 }
 
 # Resolved path (symlinks followed) of an existing dir, else the path as given.

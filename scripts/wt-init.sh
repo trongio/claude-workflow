@@ -48,6 +48,21 @@ if [ "$main" = "$dir" ]; then
     exit 0
 fi
 
+# Install and setup commands run in their own process group (wf_timed), so a
+# Ctrl-C or kill of wt-init alone would leave them running: the trap stops them.
+pgfile="$(mktemp "${TMPDIR:-/tmp}/wt-init.XXXXXX")"
+trap 'rm -f "$pgfile"' EXIT
+# shellcheck disable=SC2329 # invoked by the traps below
+on_signal() {
+    trap - INT TERM HUP
+    wf_kill_groups "$pgfile"
+    rm -f "$pgfile"
+    exit "$1"
+}
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
+trap 'on_signal 129' HUP
+
 # Copy-on-write where the filesystem allows it, plain copy otherwise.
 cow_copy() {
     cp -R --reflink=auto "$1" "$2" 2>/dev/null || cp -Rc "$1" "$2" 2>/dev/null || cp -R "$1" "$2"
@@ -142,7 +157,7 @@ while IFS= read -r name; do
     if [ -n "$lock" ] && ! cmp -s "$main/$sub/$lock" "$dir/$sub/$lock"; then
         echo "wt-init: $sub/$lock differs from main, running: $inst" >&2
         rc=0
-        wf_timed "$setup_tmo" - "$dir/$sub" "$inst" || rc=$?
+        wf_timed "$setup_tmo" - "$dir/$sub" "$inst" "$pgfile" || rc=$?
         case "$rc" in
         0) ;;
         124) echo "wt-init: $inst killed after ${setup_tmo}s (worktree.setupTimeout)" >&2 ;;
@@ -197,7 +212,7 @@ while IFS= read -r cmd; do
     [ -n "$cmd" ] || continue
     echo "wt-init: $cmd" >&2
     rc=0
-    wf_timed "$setup_tmo" - "$dir" "$cmd" || rc=$?
+    wf_timed "$setup_tmo" - "$dir" "$cmd" "$pgfile" || rc=$?
     if [ "$rc" = 124 ]; then
         echo "wt-init: $cmd killed after ${setup_tmo}s (worktree.setupTimeout)" >&2
         exit 124

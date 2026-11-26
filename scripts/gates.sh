@@ -155,16 +155,10 @@ declare -A heavy_pid=()
 # (each gate runs in its own group, so a signal to this script alone misses them).
 # shellcheck disable=SC2329 # invoked by the traps below
 on_signal() {
-    local f p sig
+    local p
     trap - INT TERM HUP
     for p in "${pids[@]}" "${!heavy_pid[@]}"; do kill -TERM "$p" 2>/dev/null || true; done
-    for sig in TERM KILL; do
-        for f in "$tmp"/pg.*; do
-            [ -f "$f" ] || continue
-            while read -r p; do kill -"$sig" -- "-$p" 2>/dev/null || true; done <"$f"
-        done
-        if [ "$sig" = TERM ]; then sleep 0.5; fi
-    done
+    wf_kill_groups "$tmp"/pg.*
     rm -rf "$tmp"
     exit "$1"
 }

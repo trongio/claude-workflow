@@ -198,6 +198,26 @@ wait "$gp" || r=$?
 sleep 0.3
 [ "$r" = 143 ] && ! pgrep -fx 'sleep 1888' >/dev/null && ok "gates: SIGTERM kills the gate's process group" || die "gates signal: rc $r"
 
+# wt-init: a signal stops the setup command's process group too (Ctrl-C on npm install).
+git worktree add -q -b sig "$dir-sig" main
+jq '.worktree.setup = ["sleep 1777"]' "$dir-sig/.claude/workflow.json" >cfg.tmp && mv cfg.tmp "$dir-sig/.claude/workflow.json"
+for sig in INT:130 TERM:143; do
+    set -m # a background job of a script ignores SIGINT unless it has its own group
+    "$wf" wt-init "$dir-sig" >/dev/null 2>&1 &
+    ip=$!
+    set +m
+    bg_pids+=("$ip")
+    wait_for 'sleep 1777' || die "wt-init setup never started"
+    kill -"${sig%:*}" "$ip"
+    r=0
+    wait "$ip" || r=$?
+    sleep 0.3
+    [ "$r" = "${sig#*:}" ] && ! pgrep -fx 'sleep 1777' >/dev/null && ok "wt-init: SIG${sig%:*} stops the setup command, exit ${sig#*:}" ||
+        die "wt-init SIG${sig%:*}: rc $r, $(pgrep -fx 'sleep 1777' || true)"
+done
+git worktree remove --force "$dir-sig"
+git branch -qD sig
+
 # ---- 5: orphans lists port-less processes, --kill is scoped -----------------
 wt4="$wtroot/WF-4"
 [ -d "$wt4" ] || die "WF-4 worktree missing"
